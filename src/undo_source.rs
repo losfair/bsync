@@ -6,11 +6,11 @@ use std::{
 };
 
 use anyhow::Result;
-use memmap2::MmapMut;
 use uuid::Uuid;
 
 use crate::{
-  undo::{format_lcn, replay_undo_log, CheckpointFile},
+  rewind::ImageRewinder,
+  undo::{format_lcn, CheckpointFile, UNDO_BLOCK_SIZE},
   undo_sink::UndoSink,
 };
 
@@ -31,12 +31,13 @@ impl UndoSource {
     })
   }
 
-  pub fn recover(&mut self, image: &mut MmapMut) -> Result<()> {
+  pub fn recover(&mut self, image: &mut File) -> Result<()> {
+    let next_index = self.checkpoint_index.map(|x| x + 1).unwrap_or(0);
     let next_index_str = format_lcn(self.checkpoint_index.map(|x| x + 1).unwrap_or(0));
     let mut next_log_file_path = self.dir.clone();
     next_log_file_path.push(&next_index_str);
-    let mut next_log_file = match File::open(&next_log_file_path) {
-      Ok(x) => x,
+    match File::open(&next_log_file_path) {
+      Ok(_) => {}
       Err(e) if e.kind() == ErrorKind::NotFound => {
         return Ok(());
       }
@@ -47,8 +48,14 @@ impl UndoSource {
     redo_dir_path.push(generate_startup_recover_redo_id(&next_index_str));
     let mut redo_sink = UndoSink::from_source(UndoSource::open_without_recovery(&redo_dir_path)?)?;
 
-    replay_undo_log(image, &mut next_log_file, &mut redo_sink)?;
-    image.flush()?;
+    let rewinder = ImageRewinder::load(
+      image.try_clone()?,
+      UNDO_BLOCK_SIZE,
+      &self.dir,
+      next_index..=next_index,
+    )?;
+    rewinder.commit(&mut redo_sink)?;
+    redo_sink.finalize()?;
     std::fs::remove_file(&next_log_file_path)?;
     log::info!(
       "Recovered incomplete undo log {}. Redo log written to {}.",
@@ -59,7 +66,7 @@ impl UndoSource {
     Ok(())
   }
 
-  pub fn open(dir: &Path, image: &mut MmapMut) -> Result<Self> {
+  pub fn open(dir: &Path, image: &mut File) -> Result<Self> {
     let mut me = Self::open_without_recovery(dir)?;
     me.recover(image)?;
     Ok(me)

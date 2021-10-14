@@ -1,5 +1,6 @@
-mod buffer_writer;
+mod cmd_misc;
 mod cmd_pull;
+mod rewind;
 mod undo;
 mod undo_sink;
 mod undo_source;

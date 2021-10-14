@@ -1,18 +1,16 @@
 use std::{
   fs::{File, OpenOptions},
-  io::{BufReader, ErrorKind, Read, Seek, SeekFrom, Write},
+  io::{Read, Seek, SeekFrom, Write},
   path::Path,
 };
 
 use anyhow::Result;
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
-use thiserror::Error;
-
-use crate::{buffer_writer::BufferWriter, undo_sink::UndoSink};
 
 pub const UNDO_MAGIC: &[u8] = b"BLKPATCH_UNDO_V1\0";
+pub const UNDO_BLOCK_SIZE: u64 = 65536;
 
 /// Compute the SHA256 checksum of offset + data.
 pub fn checksum_undo_data(offset: u64, old_data: &[u8], new_data: &[u8]) -> [u8; 32] {
@@ -78,59 +76,4 @@ impl CheckpointFile {
     self.backing.write_all(format_lcn(index).as_bytes())?;
     Ok(())
   }
-}
-
-pub fn replay_undo_log(image: &mut [u8], log: &mut File, redo: &mut UndoSink) -> Result<bool> {
-  const BUF_SIZE: usize = 128;
-
-  #[derive(Error, Debug)]
-  #[error("bad magic")]
-  struct BadMagic;
-
-  let mut log = BufReader::new(log);
-
-  let mut magic: [u8; UNDO_MAGIC.len()] = [0; UNDO_MAGIC.len()];
-  log.read_exact(&mut magic)?;
-  if magic != UNDO_MAGIC {
-    return Err(BadMagic.into());
-  }
-
-  let mut has_checksum_failure = false;
-  let mut buf_writer = BufferWriter::new(image);
-
-  loop {
-    let mut checksum = [0u8; 32];
-    match log.read_exact(&mut checksum) {
-      Ok(_) => {}
-      Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
-      Err(e) => return Err(e.into()),
-    }
-    let offset = log.read_u64::<LittleEndian>()?;
-    let size = log.read_u64::<LittleEndian>()?;
-    let mut data = vec![0u8; size as usize];
-    log.read_exact(&mut data)?;
-
-    let sink = &buf_writer[offset as usize..(offset + size) as usize];
-    if data == sink {
-      continue;
-    }
-
-    let calculated_checksum = checksum_undo_data(offset, &data, sink);
-    if calculated_checksum != checksum {
-      log::error!("undo log entry at byte offset {} failed checksum validation. unverified offset = {}, unverified data len = {}", log.stream_position()?, offset, size);
-      has_checksum_failure = true;
-      continue;
-    }
-
-    redo.write(offset, sink, &data)?;
-    buf_writer.push(offset as usize, data);
-    if buf_writer.len() >= BUF_SIZE {
-      redo.commit()?;
-      buf_writer.flush();
-    }
-  }
-
-  redo.commit()?;
-  buf_writer.flush();
-  Ok(has_checksum_failure)
 }

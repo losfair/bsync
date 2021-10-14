@@ -17,9 +17,9 @@ use ssh2::{Channel, Session};
 use structopt::StructOpt;
 use thiserror::Error;
 
-use crate::{undo_sink::UndoSink, undo_source::UndoSource};
+use crate::{undo::UNDO_BLOCK_SIZE, undo_sink::UndoSink, undo_source::UndoSource};
 
-static BLOCK_SIZES: &'static [u64] = &[2097152, 65536];
+static BLOCK_SIZES: &'static [u64] = &[2097152, UNDO_BLOCK_SIZE];
 const DIFF_BATCH_SIZE: usize = 100;
 const DATA_FETCH_BATCH_SIZE: usize = 256; // 16MiB batches
 
@@ -120,9 +120,6 @@ impl Pullcmd {
       }
     }
 
-    // Map the local image into memory.
-    let mut map = unsafe { MmapMut::map_mut(&local_image)? };
-
     // Prepare the undo log.
     let undo_path = self.undo_path.clone().unwrap_or_else(|| {
       let mut p = self.local_path.clone();
@@ -130,10 +127,13 @@ impl Pullcmd {
       p.push("undo");
       p
     });
-    let mut undo = UndoSink::from_source(UndoSource::open(&undo_path, &mut map)?)?;
+    let mut undo = UndoSink::from_source(UndoSource::open(&undo_path, &mut local_image)?)?;
 
     let mut prev_data_offsets: Vec<u64> = vec![0];
     let mut prev_block_size: u64 = remote_image_size;
+
+    // Map the local image into memory.
+    let mut map = unsafe { MmapMut::map_mut(&local_image)? };
 
     // Narrow down the diff
     for &block_size in BLOCK_SIZES {
