@@ -6,3 +6,25 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+pretty_env_logger = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.12.0", features = ["full"] }
+futures = "0.3"
+structopt = "0.3.23"
+hex = "0.4.3"
+ssh2 = "0.9.3"
+dirs = "4"
+shell-escape = "0.1.5"
+rayon = "1.5.1"
+parking_lot = "0.11"
+byteorder = "1.4.3"
+fs2 = "0.4.3"
+sha2 = { version = "0.9.8", features = ["asm"] }
+memmap2 = "0.5.0"
+itertools = "0.10.1"
+libc = "0.2"
+uuid = { version = "0.8", features = ["v4"] }
