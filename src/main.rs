@@ -1,11 +1,14 @@
 mod cmd_misc;
 mod cmd_pull;
+mod cmd_travel;
 mod config;
+mod managed;
 mod rewind;
 mod store;
 
 use anyhow::Result;
 use cmd_pull::Pullcmd;
+use cmd_travel::TravelCmd;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -17,6 +20,7 @@ struct Opt {
 #[derive(Debug, StructOpt)]
 enum Subcmd {
   Pull(Pullcmd),
+  Travel(TravelCmd),
 }
 
 fn main() -> Result<()> {
@@ -27,6 +31,9 @@ fn main() -> Result<()> {
   let opt = Opt::from_args();
   match &opt.subcommand {
     Subcmd::Pull(cmd) => {
+      cmd.run()?;
+    }
+    Subcmd::Travel(cmd) => {
       cmd.run()?;
     }
   }

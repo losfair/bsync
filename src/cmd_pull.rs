@@ -1,26 +1,27 @@
 use std::{
   borrow::Cow,
-  fs::OpenOptions,
-  io::{Read, Seek, SeekFrom, Write},
+  io::Read,
   net::{IpAddr, SocketAddr, TcpStream},
-  path::PathBuf,
+  path::{Path, PathBuf},
   str::FromStr,
 };
 
 use anyhow::Result;
-use fs2::FileExt;
+use blake2::{
+  digest::{Update, VariableOutput},
+  VarBlake2b,
+};
 use itertools::Itertools;
 use memmap2::MmapMut;
-use sha2::{Digest, Sha256};
 use shell_escape::unix::escape;
 use ssh2::{Channel, Session};
 use structopt::StructOpt;
 use thiserror::Error;
 
 use crate::{
-  config::LOG_BLOCK_SIZE,
-  rewind::{ImageRewindOptions, ImageRewinder},
-  store::{LogEntry, Store},
+  config::{BackupConfig, LOG_BLOCK_SIZE},
+  rewind::{ImageRewindLogType, ImageRewindOptions, ImageRewinder},
+  store::LogEntry,
 };
 
 static BLOCK_SIZES: &'static [u64] = &[2097152, LOG_BLOCK_SIZE];
@@ -30,31 +31,7 @@ const DATA_FETCH_BATCH_SIZE: usize = 256; // 16MiB batches
 /// Incrementally pull updates of an image.
 #[derive(Debug, StructOpt)]
 pub struct Pullcmd {
-  /// Username for connecting to the server.
-  #[structopt(short = "u", long)]
-  user: String,
-
-  /// SSH port number.
-  #[structopt(short = "p", long)]
-  port: Option<u16>,
-
-  /// Remote address.
-  #[structopt(short = "s", long)]
-  server: String,
-
-  /// Path to SSH private key.
-  #[structopt(short = "k", long)]
-  key: Option<PathBuf>,
-
-  /// Local path for logs. Defaults to `[local_path]/log/`.
-  #[structopt(long = "log")]
-  log_path: Option<PathBuf>,
-
-  /// Remote path.
-  remote_path: String,
-
-  /// Local path.
-  local_path: PathBuf,
+  config: PathBuf,
 }
 
 struct LocalBlockMetadata {
@@ -77,17 +54,21 @@ impl Pullcmd {
     #[error("total size mismatch - expecting {0}, got {1}")]
     struct TotalSizeMismatch(u64, u64);
 
+    let config = BackupConfig::must_load_from_file(&self.config);
+    let remote = &config.remote;
+    let local = &config.local;
+
     // Establish SSH session.
-    let addr = SocketAddr::new(IpAddr::from_str(&self.server)?, self.port.unwrap_or(22));
+    let addr = SocketAddr::new(IpAddr::from_str(&remote.server)?, remote.port.unwrap_or(22));
     let tcp = TcpStream::connect(addr).unwrap();
     let mut sess = Session::new()?;
     sess.set_tcp_stream(tcp);
     sess.handshake()?;
 
-    if let Some(x) = &self.key {
-      sess.userauth_pubkey_file(&self.user, None, x, None)?;
+    if let Some(x) = &remote.key {
+      sess.userauth_pubkey_file(&remote.user, None, Path::new(x), None)?;
     } else {
-      sess.userauth_agent(&self.user)?;
+      sess.userauth_agent(&remote.user)?;
     }
 
     // Get the size of the remote image.
@@ -95,70 +76,41 @@ impl Pullcmd {
       &mut sess,
       &format!(
         "stat --printf=\"%s\" {}",
-        escape(Cow::Borrowed(self.remote_path.as_str()))
+        escape(Cow::Borrowed(remote.image.as_str()))
       ),
     )?
     .parse()?;
     log::info!("Remote image size is {} bytes.", remote_image_size);
 
-    // Get the local image ready.
-    let mut local_image = OpenOptions::new()
-      .create(true)
-      .read(true)
-      .write(true)
-      .open(&self.local_path)?;
-    local_image.try_lock_exclusive()?;
-    {
-      let orig_len = local_image.metadata()?.len();
-      if orig_len < remote_image_size {
-        log::info!(
-          "Extending local image from {} to {} bytes.",
-          orig_len,
-          remote_image_size
-        );
-        local_image.seek(SeekFrom::Start(remote_image_size - 1))?;
-        local_image.write_all(&[0u8])?;
-      }
-      if orig_len > remote_image_size {
-        return Err(CannotShrinkLocalFile(orig_len, remote_image_size).into());
-      }
+    let (mut local_image, log_store) = local.open_managed(false)?;
+
+    // Ensure that the sizes are consistent.
+    let orig_len = local_image.len()?;
+    if orig_len < remote_image_size {
+      log::info!(
+        "Extending local image from {} to {} bytes.",
+        orig_len,
+        remote_image_size
+      );
+      local_image.extend_to(remote_image_size)?;
+    }
+    if orig_len > remote_image_size {
+      return Err(CannotShrinkLocalFile(orig_len, remote_image_size).into());
     }
 
-    // Prepare the log directory.
-    let log_dir_path = self.log_path.clone().unwrap_or_else(|| {
-      let mut p = self.local_path.clone();
-      p.pop();
-      p.push("log");
-      p
-    });
-    std::fs::create_dir_all(&log_dir_path)?;
-
-    // Acquire exclusive write access.
-    let mut write_lock_path = log_dir_path.clone();
-    write_lock_path.push("unique_writer.lock");
-    let write_lock_file = OpenOptions::new()
-      .create(true)
-      .read(true)
-      .write(true)
-      .open(&write_lock_path)?;
-    write_lock_file.try_lock_exclusive()?;
-
-    // Open the database.
-    let mut log_store_path = log_dir_path.clone();
-    log_store_path.push("store.db");
-    let log_store = Store::open(&log_store_path)?;
-
     let last_active_lcn = log_store.last_active_lcn()?;
+
+    // Revert partially committed data using the log.
     let lcn_to_revert = log_store.last_child(last_active_lcn)?;
     if lcn_to_revert != 0 {
-      // Rewind uncommitted logs.
       let rewinder = ImageRewinder::load(
-        local_image.try_clone()?,
-        log_store.clone(),
+        local_image.file().try_clone()?,
+        (*log_store).clone(),
         LOG_BLOCK_SIZE,
         vec![lcn_to_revert],
         ImageRewindOptions {
           skip_hash_verification_for_first_lcn: true,
+          log_type: ImageRewindLogType::Undo,
         },
       )?;
       rewinder.commit()?;
@@ -175,7 +127,7 @@ impl Pullcmd {
     let mut prev_block_size: u64 = remote_image_size;
 
     // Map the local image into memory.
-    let mut map = unsafe { MmapMut::map_mut(&local_image)? };
+    let mut map = unsafe { MmapMut::map_mut(local_image.file())? };
 
     // Narrow down the diff
     for &block_size in BLOCK_SIZES {
@@ -183,10 +135,10 @@ impl Pullcmd {
         r#"
 set -e
 x () {{
-  dd if={} bs={} count=1 skip=$1 | sha256sum | cut -d " " -f 1
+  dd if={} bs={} count=1 skip=$1 | b2sum -l 256 | cut -d " " -f 1
 }}
       "#,
-        escape(Cow::Borrowed(self.remote_path.as_str())),
+        escape(Cow::Borrowed(remote.image.as_str())),
         block_size
       );
       let mut invocations: Vec<String> = vec![];
@@ -266,7 +218,7 @@ x () {{
   dd if={} bs={} count=1 skip=$1
 }}
       "#,
-        escape(Cow::Borrowed(self.remote_path.as_str())),
+        escape(Cow::Borrowed(remote.image.as_str())),
         prev_block_size
       );
       let mut invocations: Vec<String> = vec![];
@@ -332,19 +284,21 @@ x () {{
     }
 
     // Finalize file writes
+    let image_hash: [u8; 32] = blake3::hash(&map).into();
     map.flush()?;
     drop(map);
     drop(local_image);
     log_store.activate_lcn(our_lcn)?;
+    log_store.write_image_lcn(&image_hash, our_lcn)?;
     Ok(())
   }
 }
 
 fn hash_block(data: &[u8]) -> [u8; 32] {
-  let mut hasher = Sha256::new();
+  let mut hasher = VarBlake2b::new(32).unwrap();
   hasher.update(data);
-  let result = hasher.finalize();
-  result.into()
+  let result = hasher.finalize_boxed();
+  (&result[..]).try_into().unwrap()
 }
 
 fn calculate_block_count(file_size: u64, block_size: u64) -> u64 {

@@ -21,9 +21,16 @@ struct BlockMapping {
   hash: [u8; 32],
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ImageRewindOptions {
   pub skip_hash_verification_for_first_lcn: bool,
+  pub log_type: ImageRewindLogType,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ImageRewindLogType {
+  Redo,
+  Undo,
 }
 
 impl ImageRewinder {
@@ -63,7 +70,10 @@ impl ImageRewinder {
     let mut skip_hash_verification = opts.skip_hash_verification_for_first_lcn;
 
     for lcn in lcn_list {
-      let logs = me.store.list_undo_for_lcn(lcn)?;
+      let logs = match opts.log_type {
+        ImageRewindLogType::Undo => me.store.list_undo_for_lcn(lcn)?,
+        ImageRewindLogType::Redo => me.store.list_redo_for_lcn(lcn)?,
+      };
       for entry in logs {
         assert!(entry.offset < me.base_map.len() as u64);
         assert!(entry.offset % block_size == 0);

@@ -1,4 +1,9 @@
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{
+  borrow::Cow,
+  path::Path,
+  sync::Arc,
+  time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Result;
 use parking_lot::Mutex;
@@ -22,8 +27,15 @@ pub struct LogEntryMetadata {
 }
 
 impl Store {
-  pub fn open(path: &Path) -> Result<Self> {
-    let db = rusqlite::Connection::open(path)?;
+  pub fn open_file(path: &Path, read_only: bool) -> Result<Self> {
+    let db = rusqlite::Connection::open_with_flags(
+      path,
+      if read_only {
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+      } else {
+        Default::default()
+      },
+    )?;
 
     db.execute_batch(include_str!("./init.sql"))?;
     Ok(Self {
@@ -94,8 +106,12 @@ impl Store {
 
   pub fn allocate_lcn(&self, link_lcn: u64) -> Result<u64> {
     let db = self.db.lock();
-    db.prepare_cached("insert into log_list_v1 (link) values(?)")?
-      .execute(params![link_lcn])?;
+    let now_secs = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+    db.prepare_cached("insert into log_list_v1 (link, created_at) values(?, ?)")?
+      .execute(params![link_lcn, now_secs])?;
     let rowid = db.last_insert_rowid();
     Ok(rowid as u64)
   }
@@ -120,6 +136,26 @@ impl Store {
         .query_row::<Option<u64>, _, _>(params![lcn], |row| row.get(0))?
         .unwrap_or(0),
     )
+  }
+
+  pub fn write_image_lcn(&self, image_hash: &[u8; 32], lcn: u64) -> Result<()> {
+    self
+      .db
+      .lock()
+      .prepare_cached("insert into image_lcn (lcn, image_hash) values(?, ?)")?
+      .execute(params![lcn, &image_hash[..]])?;
+    Ok(())
+  }
+
+  pub fn list_lcn_by_image(&self, image_hash: &[u8; 32]) -> Result<Vec<u64>> {
+    let db = self.db.lock();
+    let mut stmt = db.prepare_cached("select lcn from image_lcn where image_hash = ?")?;
+    let mut rows = stmt.query(params![&image_hash[..]])?;
+    let mut result: Vec<u64> = vec![];
+    while let Some(row) = rows.next()? {
+      result.push(row.get(0)?);
+    }
+    Ok(result)
   }
 
   fn write_log_generic(&self, log_table: &str, lcn: u64, batch: &[LogEntry]) -> Result<()> {
