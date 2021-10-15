@@ -18,9 +18,9 @@ use structopt::StructOpt;
 use thiserror::Error;
 
 use crate::{
+  config::LOG_BLOCK_SIZE,
   rewind::{ImageRewindOptions, ImageRewinder},
   store::{LogEntry, Store},
-  util::LOG_BLOCK_SIZE,
 };
 
 static BLOCK_SIZES: &'static [u64] = &[2097152, LOG_BLOCK_SIZE];

@@ -1,8 +1,8 @@
 mod cmd_misc;
 mod cmd_pull;
+mod config;
 mod rewind;
 mod store;
-mod util;
 
 use anyhow::Result;
 use cmd_pull::Pullcmd;
