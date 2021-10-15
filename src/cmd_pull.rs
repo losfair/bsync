@@ -17,9 +17,13 @@ use ssh2::{Channel, Session};
 use structopt::StructOpt;
 use thiserror::Error;
 
-use crate::{undo::UNDO_BLOCK_SIZE, undo_sink::UndoSink, undo_source::UndoSource};
+use crate::{
+  rewind::{ImageRewindOptions, ImageRewinder},
+  store::{LogEntry, Store},
+  util::LOG_BLOCK_SIZE,
+};
 
-static BLOCK_SIZES: &'static [u64] = &[2097152, UNDO_BLOCK_SIZE];
+static BLOCK_SIZES: &'static [u64] = &[2097152, LOG_BLOCK_SIZE];
 const DIFF_BATCH_SIZE: usize = 100;
 const DATA_FETCH_BATCH_SIZE: usize = 256; // 16MiB batches
 
@@ -42,9 +46,9 @@ pub struct Pullcmd {
   #[structopt(short = "k", long)]
   key: Option<PathBuf>,
 
-  /// Local path for undo logs. Defaults to `[local_path]/undo/`.
-  #[structopt(long = "undo")]
-  undo_path: Option<PathBuf>,
+  /// Local path for logs. Defaults to `[local_path]/log/`.
+  #[structopt(long = "log")]
+  log_path: Option<PathBuf>,
 
   /// Remote path.
   remote_path: String,
@@ -120,14 +124,52 @@ impl Pullcmd {
       }
     }
 
-    // Prepare the undo log.
-    let undo_path = self.undo_path.clone().unwrap_or_else(|| {
+    // Prepare the log directory.
+    let log_dir_path = self.log_path.clone().unwrap_or_else(|| {
       let mut p = self.local_path.clone();
       p.pop();
-      p.push("undo");
+      p.push("log");
       p
     });
-    let mut undo = UndoSink::from_source(UndoSource::open(&undo_path, &mut local_image)?)?;
+    std::fs::create_dir_all(&log_dir_path)?;
+
+    // Acquire exclusive write access.
+    let mut write_lock_path = log_dir_path.clone();
+    write_lock_path.push("unique_writer.lock");
+    let write_lock_file = OpenOptions::new()
+      .create(true)
+      .read(true)
+      .write(true)
+      .open(&write_lock_path)?;
+    write_lock_file.try_lock_exclusive()?;
+
+    // Open the database.
+    let mut log_store_path = log_dir_path.clone();
+    log_store_path.push("store.db");
+    let log_store = Store::open(&log_store_path)?;
+
+    let last_active_lcn = log_store.last_active_lcn()?;
+    let lcn_to_revert = log_store.last_child(last_active_lcn)?;
+    if lcn_to_revert != 0 {
+      // Rewind uncommitted logs.
+      let rewinder = ImageRewinder::load(
+        local_image.try_clone()?,
+        log_store.clone(),
+        LOG_BLOCK_SIZE,
+        vec![lcn_to_revert],
+        ImageRewindOptions {
+          skip_hash_verification_for_first_lcn: true,
+        },
+      )?;
+      rewinder.commit()?;
+      log::info!(
+        "Reverted incomplete logs (lcn {}, last active lcn {}).",
+        lcn_to_revert,
+        last_active_lcn
+      );
+    }
+
+    let our_lcn = log_store.allocate_lcn(last_active_lcn)?;
 
     let mut prev_data_offsets: Vec<u64> = vec![0];
     let mut prev_block_size: u64 = remote_image_size;
@@ -253,15 +295,24 @@ x () {{
 
       // Write the original data to undo logs
       let mut cursor: u64 = 0;
+      let mut undo_batch: Vec<LogEntry> = vec![];
+      let mut redo_batch: Vec<LogEntry> = vec![];
       for (&offset, &len) in data_offset_batch.iter().zip(data_sizes.iter()) {
-        undo.write(
+        undo_batch.push(LogEntry {
           offset,
-          &map[offset as usize..(offset + len) as usize],
-          &output[cursor as usize..(cursor + len) as usize],
-        )?;
+          old_data: Cow::Borrowed(&output[cursor as usize..(cursor + len) as usize]),
+          new_data: Cow::Borrowed(&map[offset as usize..(offset + len) as usize]),
+        });
+        redo_batch.push(LogEntry {
+          offset,
+          old_data: Cow::Borrowed(&map[offset as usize..(offset + len) as usize]),
+          new_data: Cow::Borrowed(&output[cursor as usize..(cursor + len) as usize]),
+        });
         cursor += len;
       }
-      undo.commit()?;
+
+      log_store.write_undo(our_lcn, &undo_batch)?;
+      log_store.write_redo(our_lcn, &redo_batch)?;
 
       // Write the new data
       let mut cursor: u64 = 0;
@@ -282,7 +333,7 @@ x () {{
     map.flush()?;
     drop(map);
     drop(local_image);
-    undo.finalize()?;
+    log_store.activate_lcn(our_lcn)?;
     Ok(())
   }
 }

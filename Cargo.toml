@@ -28,3 +28,5 @@ memmap2 = "0.5.0"
 itertools = "0.10.1"
 libc = "0.2"
 uuid = { version = "0.8", features = ["v4"] }
+rusqlite = "0.25.3"
+blake3 = "1.0.0"
