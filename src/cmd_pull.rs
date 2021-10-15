@@ -193,6 +193,7 @@ x () {{
       let mut local_blocks: Vec<LocalBlockMetadata> = vec![];
 
       // Build the commands for hashing remote blocks.
+      log::info!("Calculating local hashes at block size {}.", block_size);
       for &data_offset in &prev_data_offsets {
         let block_count = calculate_block_count(prev_block_size, block_size);
         log::debug!("data_offset {}, block_count {}", data_offset, block_count);
@@ -213,6 +214,7 @@ x () {{
         }
       }
 
+      log::info!("Calculating remote block hashes.");
       let mut output = vec![];
       for i in (0..invocations.len()).step_by(DIFF_BATCH_SIZE) {
         let window = i..(i + DIFF_BATCH_SIZE).min(invocations.len());
