@@ -31,11 +31,6 @@ create table if not exists `log_list_v1` (
   `lcn` integer not null primary key autoincrement,
   `link` integer not null,
   `created_at` integer not null,
-  `active` integer not null default 0
-);
-
--- Map image hashes to their corresponding LCN.
-create table if not exists `image_lcn` (
-  `lcn` integer not null primary key,
-  `image_hash` blob not null
+  `active` integer not null default 0,
+  `consistent` integer not null default 0
 );

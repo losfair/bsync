@@ -12,7 +12,9 @@ use blake2::{
   VarBlake2b,
 };
 use itertools::Itertools;
+use libc::c_void;
 use memmap2::MmapMut;
+use nix::sys::mman::{madvise, MmapAdvise};
 use shell_escape::unix::escape;
 use ssh2::{Channel, Session};
 use structopt::StructOpt;
@@ -20,17 +22,26 @@ use thiserror::Error;
 
 use crate::{
   config::{BackupConfig, LOG_BLOCK_SIZE},
-  rewind::{ImageRewindLogType, ImageRewindOptions, ImageRewinder},
+  recover::IncompleteLogRecoveryOptions,
+  signals::CRITICAL_WRITE_LOCK,
   store::LogEntry,
 };
 
-static BLOCK_SIZES: &'static [u64] = &[2097152, LOG_BLOCK_SIZE];
+static BLOCK_SIZES: &'static [u64] = &[1048576 * 8, LOG_BLOCK_SIZE];
 const DIFF_BATCH_SIZE: usize = 100;
 const DATA_FETCH_BATCH_SIZE: usize = 256; // 16MiB batches
 
 /// Incrementally pull updates of an image.
 #[derive(Debug, StructOpt)]
 pub struct Pullcmd {
+  /// Undo incomplete writes. The default behavior is redo.
+  #[structopt(long)]
+  undo_incomplete: bool,
+
+  /// Allow hash mismatch during log recovery.
+  #[structopt(short, long)]
+  force: bool,
+
   config: PathBuf,
 }
 
@@ -82,7 +93,13 @@ impl Pullcmd {
     .parse()?;
     log::info!("Remote image size is {} bytes.", remote_image_size);
 
-    let (mut local_image, log_store) = local.open_managed(false)?;
+    let (mut local_image, log_store) = local.open_managed(
+      false,
+      Some(IncompleteLogRecoveryOptions {
+        undo: self.undo_incomplete,
+        force: self.force,
+      }),
+    )?;
 
     // Ensure that the sizes are consistent.
     let orig_len = local_image.len()?;
@@ -98,30 +115,7 @@ impl Pullcmd {
       return Err(CannotShrinkLocalFile(orig_len, remote_image_size).into());
     }
 
-    let last_active_lcn = log_store.last_active_lcn()?;
-
-    // Revert partially committed data using the log.
-    let lcn_to_revert = log_store.last_child(last_active_lcn)?;
-    if lcn_to_revert != 0 {
-      let rewinder = ImageRewinder::load(
-        local_image.file().try_clone()?,
-        (*log_store).clone(),
-        LOG_BLOCK_SIZE,
-        vec![lcn_to_revert],
-        ImageRewindOptions {
-          skip_hash_verification_for_first_lcn: true,
-          log_type: ImageRewindLogType::Undo,
-        },
-      )?;
-      rewinder.commit()?;
-      log::info!(
-        "Reverted incomplete logs (lcn {}, last active lcn {}).",
-        lcn_to_revert,
-        last_active_lcn
-      );
-    }
-
-    let our_lcn = log_store.allocate_lcn(last_active_lcn)?;
+    let our_lcn = log_store.allocate_lcn(log_store.last_active_lcn()?)?;
 
     let mut prev_data_offsets: Vec<u64> = vec![0];
     let mut prev_block_size: u64 = remote_image_size;
@@ -163,6 +157,13 @@ x () {{
             data_offset,
             local_hash: hash_block(local_data),
           });
+          unsafe {
+            madvise(
+              local_data.as_ptr() as *const c_void as *mut c_void,
+              local_data.len(),
+              MmapAdvise::MADV_DONTNEED,
+            )?;
+          }
         }
       }
 
@@ -271,6 +272,7 @@ x () {{
       // Write the new data
       let mut cursor: u64 = 0;
       for (&offset, &len) in data_offset_batch.iter().zip(data_sizes.iter()) {
+        let _guard = CRITICAL_WRITE_LOCK.lock();
         map[offset as usize..(offset + len) as usize]
           .copy_from_slice(&output[cursor as usize..(cursor + len) as usize]);
         cursor += len;
@@ -284,12 +286,10 @@ x () {{
     }
 
     // Finalize file writes
-    let image_hash: [u8; 32] = blake3::hash(&map).into();
     map.flush()?;
     drop(map);
     drop(local_image);
-    log_store.activate_lcn(our_lcn)?;
-    log_store.write_image_lcn(&image_hash, our_lcn)?;
+    log_store.activate_lcn(our_lcn, true)?;
     Ok(())
   }
 }

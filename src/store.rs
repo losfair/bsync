@@ -7,11 +7,13 @@ use std::{
 
 use anyhow::Result;
 use parking_lot::Mutex;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
+
+use crate::{config::LOG_BLOCK_SIZE, util::align_block};
 
 #[derive(Clone)]
 pub struct Store {
-  db: Arc<Mutex<rusqlite::Connection>>,
+  pub db: Arc<Mutex<rusqlite::Connection>>,
 }
 
 pub struct LogEntry<'a> {
@@ -24,6 +26,11 @@ pub struct LogEntryMetadata {
   pub offset: u64,
   pub old_data_hash: [u8; 32],
   pub new_data_hash: [u8; 32],
+}
+
+pub struct ConsistentLogInfo {
+  pub lcn: u64,
+  pub created_at: u64,
 }
 
 impl Store {
@@ -43,8 +50,10 @@ impl Store {
     })
   }
 
-  pub fn must_read_cas(&self, hash: &[u8; 32]) -> Vec<u8> {
-    self.read_cas(hash).expect("cas read failed")
+  pub fn must_read_cas_aligned(&self, hash: &[u8; 32]) -> Vec<u8> {
+    let v = self.read_cas(hash).expect("cas read failed");
+    assert!(v.len() == LOG_BLOCK_SIZE as usize);
+    v
   }
 
   fn read_cas(&self, hash: &[u8; 32]) -> Result<Vec<u8>> {
@@ -95,12 +104,12 @@ impl Store {
     Ok(result)
   }
 
-  pub fn activate_lcn(&self, lcn: u64) -> Result<()> {
+  pub fn activate_lcn(&self, lcn: u64, consistent: bool) -> Result<()> {
     self
       .db
       .lock()
-      .prepare_cached("update log_list_v1 set active = 1 where lcn = ?")?
-      .execute(params![lcn])?;
+      .prepare_cached("update log_list_v1 set active = 1, consistent = ? where lcn = ?")?
+      .execute(params![consistent, lcn])?;
     Ok(())
   }
 
@@ -127,6 +136,27 @@ impl Store {
     )
   }
 
+  pub fn lcn_backward_path(&self, start: u64, end: u64) -> Result<Option<Vec<u64>>> {
+    if start < end {
+      return Ok(None);
+    }
+
+    let db = self.db.lock();
+    let mut stmt = db.prepare_cached("select link from log_list_v1 where lcn = ?")?;
+    let mut p: Vec<u64> = vec![start];
+    let mut current = start;
+    while current > end {
+      let link: u64 = stmt.query_row(params![current], |r| r.get(0))?;
+      p.push(link);
+      current = link;
+    }
+    if current == end {
+      Ok(Some(p))
+    } else {
+      Ok(None)
+    }
+  }
+
   pub fn last_child(&self, lcn: u64) -> Result<u64> {
     Ok(
       self
@@ -138,24 +168,30 @@ impl Store {
     )
   }
 
-  pub fn write_image_lcn(&self, image_hash: &[u8; 32], lcn: u64) -> Result<()> {
-    self
-      .db
-      .lock()
-      .prepare_cached("insert into image_lcn (lcn, image_hash) values(?, ?)")?
-      .execute(params![lcn, &image_hash[..]])?;
-    Ok(())
+  pub fn list_consistent_logs(&self) -> Result<Vec<ConsistentLogInfo>> {
+    Ok(
+      self
+        .db
+        .lock()
+        .prepare_cached("select lcn, created_at from log_list_v1 where consistent = 1")?
+        .query_map(params![], |r| {
+          Ok(ConsistentLogInfo {
+            lcn: r.get(0)?,
+            created_at: r.get(1)?,
+          })
+        })?
+        .collect::<Result<_, rusqlite::Error>>()?,
+    )
   }
 
-  pub fn list_lcn_by_image(&self, image_hash: &[u8; 32]) -> Result<Vec<u64>> {
-    let db = self.db.lock();
-    let mut stmt = db.prepare_cached("select lcn from image_lcn where image_hash = ?")?;
-    let mut rows = stmt.query(params![&image_hash[..]])?;
-    let mut result: Vec<u64> = vec![];
-    while let Some(row) = rows.next()? {
-      result.push(row.get(0)?);
-    }
-    Ok(result)
+  pub fn lcn_is_consistent(&self, lcn: u64) -> Result<bool> {
+    let lcn: Option<u64> = self
+      .db
+      .lock()
+      .prepare_cached("select lcn from log_list_v1 where lcn = ? and consistent = 1")?
+      .query_row(params![lcn], |r| r.get(0))
+      .optional()?;
+    Ok(lcn.is_some())
   }
 
   fn write_log_generic(&self, log_table: &str, lcn: u64, batch: &[LogEntry]) -> Result<()> {
@@ -169,8 +205,10 @@ impl Store {
         log_table
       ))?;
       for entry in batch {
-        let old_data_hash: [u8; 32] = blake3::hash(&entry.old_data).into();
-        let new_data_hash: [u8; 32] = blake3::hash(&entry.new_data).into();
+        let old_data = align_block(&entry.old_data, LOG_BLOCK_SIZE as usize);
+        let new_data = align_block(&entry.new_data, LOG_BLOCK_SIZE as usize);
+        let old_data_hash: [u8; 32] = blake3::hash(&old_data).into();
+        let new_data_hash: [u8; 32] = blake3::hash(&new_data).into();
 
         cas_insert_stmt.execute(params![&old_data_hash[..], &entry.old_data])?;
         cas_insert_stmt.execute(params![&new_data_hash[..], &entry.new_data])?;
