@@ -1,10 +1,9 @@
 use std::borrow::Cow;
 
-pub fn div_round_up(value: u64, align: u64) -> u64 {
-  (value + align - 1) / align
-}
+use crate::config::LOG_BLOCK_SIZE;
 
-pub fn align_block(data: &[u8], block_size: usize) -> Cow<[u8]> {
+pub fn align_block(data: &[u8]) -> Cow<[u8]> {
+  let block_size = LOG_BLOCK_SIZE as usize;
   assert!(data.len() <= block_size);
   if data.len() < block_size {
     log::debug!(

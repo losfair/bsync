@@ -1,14 +1,7 @@
-use std::path::{Path, PathBuf};
-
-use anyhow::Result;
 use serde::Deserialize;
+use std::path::Path;
 
-use crate::{
-  managed::{ManagedImage, ManagedStore},
-  recover::{recover_incomplete_logs, IncompleteLogRecoveryOptions},
-};
-
-pub const LOG_BLOCK_SIZE: u64 = 262144;
+pub const LOG_BLOCK_SIZE: usize = 262144;
 
 #[derive(Deserialize)]
 pub struct BackupConfig {
@@ -36,8 +29,8 @@ pub struct BackupRemoteConfig {
 
 #[derive(Deserialize)]
 pub struct BackupLocalConfig {
-  pub image: String,
-  pub log: Option<String>,
+  /// Local database path.
+  pub db: String,
 }
 
 impl BackupConfig {
@@ -58,37 +51,5 @@ impl BackupConfig {
       );
       std::process::exit(1);
     })
-  }
-}
-
-impl BackupLocalConfig {
-  pub fn open_managed(
-    &self,
-    read_only: bool,
-    recovery: Option<IncompleteLogRecoveryOptions>,
-  ) -> Result<(ManagedImage, ManagedStore)> {
-    let image = ManagedImage::open(Path::new(&self.image), read_only)?;
-    let log = self.open_managed_log(read_only)?;
-
-    if let Some(recovery) = recovery {
-      recover_incomplete_logs(image.file(), &log, recovery)?;
-    }
-
-    Ok((image, log))
-  }
-
-  pub fn open_managed_log(&self, read_only: bool) -> Result<ManagedStore> {
-    let log_dir_path = self
-      .log
-      .as_ref()
-      .map(|x| PathBuf::from(&x))
-      .unwrap_or_else(|| {
-        let mut p = PathBuf::from(&self.image);
-        p.pop();
-        p.push("log");
-        p
-      });
-    let store = ManagedStore::open(&log_dir_path, read_only)?;
-    Ok(store)
   }
 }
