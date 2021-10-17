@@ -15,7 +15,7 @@ jobs:
           profile: minimal
           toolchain: stable
       - name: Install system dependencies
-        run: sudo apt install musl-tools llvm-tools lld
+        run: sudo apt install musl-tools llvm lld
       - name: Add targets
         run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
       - name: Build
