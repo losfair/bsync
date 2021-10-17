@@ -1,6 +1,6 @@
 pragma journal_mode = wal;
 
--- Content-addressable storage for blocks. Keyed by the BLAKE2b hash
+-- Content-addressable storage for blocks. Keyed by the BLAKE3 hash
 -- of `content`.
 create table if not exists `cas_v1` (
   `hash` blob not null primary key,
