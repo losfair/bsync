@@ -1,4 +1,5 @@
 use std::{
+  convert::TryInto,
   path::Path,
   sync::{
     atomic::{AtomicU64, Ordering},
