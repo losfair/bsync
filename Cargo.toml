@@ -1,38 +1,9 @@
-[package]
-name = "blkpatch"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+  "blkredo",
+  "blkxmit",
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-anyhow = "1"
-thiserror = "1"
-log = "0.4"
-pretty_env_logger = "0.4"
-serde = { version = "1", features = ["derive"] }
-structopt = "0.3.23"
-hex = "0.4.3"
-ssh2 = "0.9.3"
-dirs = "4"
-shell-escape = "0.1.5"
-rayon = "1.5.1"
-parking_lot = "0.11"
-byteorder = "1.4.3"
-fs2 = "0.4.3"
-memmap2 = "0.5.0"
-itertools = "0.10.1"
-libc = "0.2"
-uuid = { version = "0.8", features = ["v4"] }
-rusqlite = "0.25.3"
-blake3 = "1.0.0"
-serde_yaml = "0.8"
-signal-hook = "0.3.10"
-prettytable-rs = "0.8"
-chrono = "0.4.19"
-nbd = "0.2.3"
-bloomfilter = "1.0.9"
-nix = "0.23"
-phf = { version = "0.10", default-features = false, features = ["macros"] }
-lazy_static = "1"
-size_format = "1.0.2"
+[profile.release]
+lto = "thin"
+panic = "abort"
