@@ -31,10 +31,13 @@ fn main() {
       let end_offset = initial_offset
         .checked_add(chunk_size.checked_mul(chunk_count).unwrap())
         .unwrap();
-      let end_offset = usize::try_from(f.metadata().unwrap().len())
-        .unwrap()
-        .min(end_offset);
+
+      // We're not using `metadata.len` here because of the need to deal with block devices.
+      f.seek(SeekFrom::End(0)).unwrap();
+      let file_len = f.stream_position().unwrap();
+      let end_offset = usize::try_from(file_len).unwrap().min(end_offset);
       f.seek(SeekFrom::Start(initial_offset as u64)).unwrap();
+
       for offset in (initial_offset..end_offset).step_by(chunk_size) {
         let end_offset = offset.checked_add(chunk_size).unwrap().min(end_offset);
         let read_len = end_offset.checked_sub(offset).unwrap();
@@ -53,9 +56,14 @@ fn main() {
         .split(",")
         .map(|x| x.parse().expect("bad offset"))
         .collect();
-      let file_size = f.metadata().unwrap().len() as usize;
+      f.seek(SeekFrom::End(0)).unwrap();
+      let file_size = f.stream_position().unwrap();
+
       for offset in offset_list {
-        let end_offset = offset.checked_add(chunk_size).unwrap().min(file_size);
+        let end_offset = offset
+          .checked_add(chunk_size)
+          .unwrap()
+          .min(file_size as usize);
         let read_len = end_offset.checked_sub(offset).unwrap();
         assert!(read_len > 0);
         f.seek(SeekFrom::Start(offset as u64)).unwrap();

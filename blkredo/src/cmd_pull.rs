@@ -1,5 +1,6 @@
 use std::{
   borrow::Cow,
+  fs::OpenOptions,
   io::{Read, Write},
   net::{IpAddr, SocketAddr, TcpStream},
   path::{Path, PathBuf},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
+use fs2::FileExt;
 use itertools::Itertools;
 use shell_escape::unix::escape;
 use size_format::SizeFormatterBinary;
@@ -46,8 +48,36 @@ impl Pullcmd {
     #[error("remote architecture not supported: {0}")]
     struct ArchNotSupported(String);
 
+    #[derive(Error, Debug)]
+    #[error("`remote.scripts` requested but `local.pull_lock` is not set. If this is really the intended config, set `remote.scripts.no_pull_lock` to `true`.")]
+    struct PullLockRequired;
+
+    #[derive(Error, Debug)]
+    #[error("cannot acquire pull lock on {0}: {1}")]
+    struct LockAcquire(String, std::io::Error);
+
     let config = BackupConfig::must_load_from_file(&self.config);
     let remote = &config.remote;
+
+    // Unique access.
+    if let Some(scripts) = &config.remote.scripts {
+      if !scripts.no_pull_lock.unwrap_or(false) && config.local.pull_lock.is_none() {
+        return Err(PullLockRequired.into());
+      }
+    }
+    let _pull_lock_file = if let Some(path) = &config.local.pull_lock {
+      let f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+      f.try_lock_exclusive()
+        .map_err(|e| LockAcquire(path.clone(), e))?;
+      log::info!("Acquired pull lock at {}.", path);
+      Some(f)
+    } else {
+      None
+    };
 
     // Establish SSH session.
     let addr = SocketAddr::new(IpAddr::from_str(&remote.server)?, remote.port.unwrap_or(22));
@@ -63,17 +93,6 @@ impl Pullcmd {
     }
 
     let db = Database::open_file(Path::new(&config.local.db), false)?;
-
-    // Get the size of the remote image.
-    let remote_image_size: u64 = exec_oneshot(
-      &mut sess,
-      &format!(
-        "stat --printf=\"%s\" {}",
-        escape(Cow::Borrowed(remote.image.as_str()))
-      ),
-    )?
-    .parse()?;
-    log::info!("Remote image size is {} bytes.", remote_image_size);
 
     let remote_arch = exec_oneshot(&mut sess, "uname -m")?;
     let remote_arch = remote_arch.trim();
@@ -115,6 +134,33 @@ fi
       remote_file.wait_close()?;
       println!("Installed blkxmit on remote host at {}.", upload_path);
     }
+
+    if let Some(script) = config
+      .remote
+      .scripts
+      .as_ref()
+      .and_then(|x| x.pre_pull.as_ref())
+    {
+      log::info!("Running pre_pull script.");
+      let out = exec_oneshot(&mut sess, script)?;
+      log::info!("pre_pull output: {}", out);
+      println!("Finished running pre_pull script.");
+    }
+
+    // Get the size of the remote image.
+    //
+    // The image might be created by `pre_pull`.
+    let remote_image_size: u64 = exec_oneshot(
+      &mut sess,
+      &format!(
+        "blockdev --getsize64 {} || stat --printf=\"%s\" {}",
+        escape(Cow::Borrowed(remote.image.as_str())),
+        escape(Cow::Borrowed(remote.image.as_str())),
+      ),
+    )?
+    .trim()
+    .parse()?;
+    log::info!("Remote image size is {} bytes.", remote_image_size);
 
     let mut lsn = db.max_lsn();
     let snapshot = db.snapshot(lsn)?;
@@ -190,6 +236,18 @@ fi
       "Pulled {}B.",
       SizeFormatterBinary::new(total_redo_bytes as u64)
     );
+
+    if let Some(script) = config
+      .remote
+      .scripts
+      .as_ref()
+      .and_then(|x| x.post_pull.as_ref())
+    {
+      log::info!("Running post_pull script.");
+      let out = exec_oneshot(&mut sess, script)?;
+      log::info!("post_pull output: {}", out);
+      println!("Finished running post_pull script.");
+    }
     Ok(())
   }
 }

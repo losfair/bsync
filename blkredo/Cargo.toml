@@ -5,6 +5,7 @@ edition = "2018"
 license = "MIT"
 repository = "https://github.com/losfair/blkredo"
 description = "An incremental backup tool for block devices."
+authors = ["Heyang Zhou <heyang.zhou@icloud.com>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,3 +31,4 @@ nbd = "0.2.3"
 phf = { version = "0.10", default-features = false, features = ["macros"] }
 lazy_static = "1"
 size_format = "1.0.2"
+fs2 = "0.4.3"

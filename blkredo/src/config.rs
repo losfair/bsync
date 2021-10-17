@@ -25,12 +25,25 @@ pub struct BackupRemoteConfig {
 
   /// Remote image path.
   pub image: String,
+
+  /// Scripts.
+  pub scripts: Option<BackupRemoteScripts>,
+}
+
+#[derive(Deserialize)]
+pub struct BackupRemoteScripts {
+  pub no_pull_lock: Option<bool>,
+  pub pre_pull: Option<String>,
+  pub post_pull: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct BackupLocalConfig {
   /// Local database path.
   pub db: String,
+
+  /// Local pull lock path.
+  pub pull_lock: Option<String>,
 }
 
 impl BackupConfig {
