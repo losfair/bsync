@@ -214,7 +214,7 @@ fi
         }
       }
     }
-    bar.finish_and_clear();
+    bar.finish();
     drop(bar);
 
     log::info!("{} blocks changed. Fetching changes.", fetch_list.len());
@@ -250,7 +250,7 @@ fi
       );
       total_redo_bytes += output.len();
     }
-    bar.finish_and_clear();
+    bar.finish();
     drop(bar);
 
     db.add_consistent_point(lsn, remote_image_size);
