@@ -48,6 +48,9 @@ impl Pullcmd {
     #[derive(Error, Debug)]
     #[error("remote architecture not supported: {0}")]
     struct ArchNotSupported(String);
+    #[derive(Error, Debug)]
+    #[error("remote os not supported: {0}")]
+    struct OsNotSupported(String);
 
     #[derive(Error, Debug)]
     #[error("`remote.scripts` requested but `local.pull_lock` is not set. If this is really the intended config, set `remote.scripts.no_pull_lock` to `true`.")]
@@ -95,8 +98,15 @@ impl Pullcmd {
 
     let db = Database::open_file(Path::new(&config.local.db), false)?;
 
-    let remote_arch = exec_oneshot(&mut sess, "uname -m")?;
-    let remote_arch = remote_arch.trim();
+    let remote_uname = exec_oneshot(&mut sess, "uname -m; uname -s")?;
+    let mut remote_uname_segs = remote_uname.split("\n");
+    let remote_arch = remote_uname_segs.next().unwrap_or("");
+    let remote_os = remote_uname_segs.next().unwrap_or("");
+
+    if remote_os != "Linux" {
+      return Err(OsNotSupported(remote_os.to_string()).into());
+    }
+
     log::info!("Remote architecture is {}.", remote_arch);
 
     let blkxmit_image = *ARCH_BLKXMIT

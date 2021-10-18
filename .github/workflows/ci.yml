@@ -20,8 +20,15 @@ jobs:
         run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
       - name: Build
         run: ./build.sh
-      - name: Upload binary
+      - name: Build static
+        run: cd blkredo && cargo build --release --target x86_64-unknown-linux-musl --features vendored
+      - name: Collect binaries
+        run: |
+          mkdir dist
+          cp ./target/release/blkredo ./dist/blkredo.x86_64-unknown-linux-gnu
+          cp ./target/x86_64-unknown-linux-musl/release/blkredo ./dist/blkredo.x86_64-unknown-linux-musl
+      - name: Upload
         uses: actions/upload-artifact@v2
         with:
           name: exe-linux
-          path: target/release/blkredo
+          path: ./dist
