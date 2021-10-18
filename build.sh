@@ -15,6 +15,7 @@ cd ..
 
 cd blkredo
 cargo build --release
+cargo deb --no-strip
 cd ..
 
 echo "Done."
