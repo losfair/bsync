@@ -1,7 +1,7 @@
 use std::{
   borrow::Cow,
   fs::OpenOptions,
-  io::{Read, Write},
+  io::{BufRead, BufReader, Read, Write},
   net::{IpAddr, SocketAddr, TcpStream},
   path::{Path, PathBuf},
   str::FromStr,
@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Result;
 use fs2::FileExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use shell_escape::unix::escape;
 use size_format::SizeFormatterBinary;
@@ -168,11 +169,23 @@ fi
 
     let mut fetch_list: Vec<usize> = vec![];
 
+    let gen_pb_style = |name: &str| {
+      ProgressStyle::default_bar().template(
+        &format!("{{spinner:.green}} {} [{{elapsed_precise}}] [{{wide_bar:.cyan/blue}}] {{bytes}}/{{total_bytes}}", name),
+      )
+      .progress_chars("#>-")
+    };
+
+    let bar = ProgressBar::new(remote_image_size);
+    bar.set_style(gen_pb_style("Diff"));
+
     for chunk in &(0usize..remote_image_size as usize)
       .step_by(LOG_BLOCK_SIZE)
       .chunks(DIFF_BATCH_SIZE)
     {
       let chunk = chunk.collect_vec();
+      let mut microprogress: usize = 0;
+      bar.set_position(chunk[0] as u64);
       let script = format!(
         "~/.blkredo/{} {} {} hash {} {}",
         escape(Cow::Borrowed(blkxmit_filename.as_str())),
@@ -181,7 +194,10 @@ fi
         chunk[0],
         chunk.len(),
       );
-      let output = exec_oneshot_bin(&mut sess, &script)?;
+      let output = exec_oneshot_bin(&mut sess, &script, |inc| {
+        microprogress += inc;
+        bar.set_position(chunk[0] as u64 + (microprogress as u64 / 32) * LOG_BLOCK_SIZE as u64);
+      })?;
       if output.len() != chunk.len() * 32 {
         return Err(ByteCountMismatch(chunk.len() * 32, output.len()).into());
       }
@@ -198,8 +214,12 @@ fi
         }
       }
     }
+    bar.finish_and_clear();
+    drop(bar);
 
     log::info!("{} blocks changed. Fetching changes.", fetch_list.len());
+    let bar = ProgressBar::new(fetch_list.len() as u64 * LOG_BLOCK_SIZE as u64);
+    bar.set_style(gen_pb_style("Fetch"));
     let mut total_redo_bytes: usize = 0;
     for chunk in &fetch_list.iter().copied().chunks(DATA_FETCH_BATCH_SIZE) {
       let chunk = chunk.collect_vec();
@@ -210,7 +230,7 @@ fi
         LOG_BLOCK_SIZE,
         chunk.iter().map(|x| format!("{}", x)).join(","),
       );
-      let output = exec_oneshot_bin(&mut sess, &script)?;
+      let output = exec_oneshot_bin(&mut sess, &script, |inc| bar.inc(inc as u64))?;
       if output.len() != chunk.len() * LOG_BLOCK_SIZE {
         return Err(ByteCountMismatch(chunk.len() * LOG_BLOCK_SIZE, output.len()).into());
       }
@@ -230,6 +250,8 @@ fi
       );
       total_redo_bytes += output.len();
     }
+    bar.finish_and_clear();
+    drop(bar);
 
     db.add_consistent_point(lsn, remote_image_size);
     println!(
@@ -257,23 +279,40 @@ fn exec_oneshot(sess: &mut Session, cmd: &str) -> Result<String> {
   exec_oneshot_in(&mut channel, cmd)
 }
 
-fn exec_oneshot_bin(sess: &mut Session, cmd: &str) -> Result<Vec<u8>> {
+fn exec_oneshot_bin(sess: &mut Session, cmd: &str, progress: impl FnMut(usize)) -> Result<Vec<u8>> {
   let mut channel = sess.channel_session()?;
-  exec_oneshot_bin_in(&mut channel, cmd)
+  exec_oneshot_bin_in(&mut channel, cmd, progress)
 }
 
 fn exec_oneshot_in(channel: &mut Channel, cmd: &str) -> Result<String> {
-  exec_oneshot_bin_in(channel, cmd).and_then(|x| String::from_utf8(x).map_err(anyhow::Error::from))
+  exec_oneshot_bin_in(channel, cmd, |_| ())
+    .and_then(|x| String::from_utf8(x).map_err(anyhow::Error::from))
 }
 
-fn exec_oneshot_bin_in(channel: &mut Channel, cmd: &str) -> Result<Vec<u8>> {
+fn exec_oneshot_bin_in(
+  channel: &mut Channel,
+  cmd: &str,
+  mut progress: impl FnMut(usize),
+) -> Result<Vec<u8>> {
   #[derive(Debug, Error)]
   #[error("remote returned error {0}")]
   struct RemoteError(i32);
 
   channel.exec(cmd)?;
   let mut data = Vec::new();
-  channel.read_to_end(&mut data)?;
+  {
+    let mut reader = BufReader::new(&mut *channel);
+    loop {
+      let buf = reader.fill_buf()?;
+      if buf.len() == 0 {
+        break;
+      }
+      data.extend_from_slice(buf);
+      let len = buf.len();
+      reader.consume(len);
+      progress(len);
+    }
+  }
   channel.wait_close()?;
   let status = channel.exit_status()?;
   if status != 0 {
