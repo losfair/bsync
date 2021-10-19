@@ -151,6 +151,7 @@ dependencies = [
  "prettytable-rs",
  "rusqlite",
  "serde",
+ "serde_json",
  "serde_yaml",
  "sha2",
  "shell-escape",
@@ -984,6 +985,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.68"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f690853975602e1bfe1ccbf50504d67174e3bcf340f23b5ea9992e0587a52d8"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

@@ -174,7 +174,7 @@ echo -n "$HOME/.bsync"
     let remote_image_size: u64 = exec_oneshot(
       &mut sess,
       &format!(
-        "blockdev --getsize64 {} || stat --printf=\"%s\" {}",
+        "blockdev --getsize64 {} || stat -c \"%s\" {}",
         escape(Cow::Borrowed(remote.image.as_str())),
         escape(Cow::Borrowed(remote.image.as_str())),
       ),
