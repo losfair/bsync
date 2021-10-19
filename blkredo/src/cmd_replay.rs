@@ -38,7 +38,7 @@ impl Replaycmd {
       Inconsistent,
     }
 
-    let db = Database::open_file(&self.db)?;
+    let db = Database::open_file(&self.db, false)?;
     let cp_list = db.list_consistent_point();
     let cp = match cp_list.iter().find(|x| x.lsn == self.lsn) {
       Some(x) => x,

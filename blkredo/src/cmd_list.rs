@@ -17,7 +17,7 @@ pub struct Listcmd {
 
 impl Listcmd {
   pub fn run(&self) -> Result<()> {
-    let db = Database::open_file(&self.db)?;
+    let db = Database::open_file(&self.db, false)?;
     let cp_list = db.list_consistent_point();
 
     let mut table = Table::new();

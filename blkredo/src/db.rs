@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use thiserror::Error;
 
 use crate::util::align_block;
@@ -41,12 +41,17 @@ pub struct ConsistentPoint {
 }
 
 impl Database {
-  pub fn open_file(path: &Path) -> Result<Self> {
+  pub fn open_file(path: &Path, create: bool) -> Result<Self> {
     #[derive(Error, Debug)]
     #[error("migration failed: {0}")]
     struct MigrationError(anyhow::Error);
 
-    let mut db = Connection::open(path)?;
+    let mut flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE;
+    if create {
+      flags |= OpenFlags::SQLITE_OPEN_CREATE;
+    }
+
+    let mut db = Connection::open_with_flags(path, flags)?;
 
     db.execute_batch(
       r#"

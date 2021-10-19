@@ -44,7 +44,7 @@ impl SquashCmd {
       DataLoss,
     }
 
-    let db = Database::open_file(&self.db)?;
+    let db = Database::open_file(&self.db, false)?;
     let cp_list = db.list_consistent_point();
     if self.start_lsn != 0 {
       match cp_list.iter().find(|x| x.lsn == self.start_lsn) {

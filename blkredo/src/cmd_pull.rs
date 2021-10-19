@@ -97,7 +97,7 @@ impl Pullcmd {
       sess.userauth_agent(&remote.user)?;
     }
 
-    let db = Database::open_file(Path::new(&config.local.db))?;
+    let db = Database::open_file(Path::new(&config.local.db), true)?;
 
     let remote_uname = exec_oneshot(&mut sess, "uname -m; uname -s")?;
     let mut remote_uname_segs = remote_uname.split("\n");
