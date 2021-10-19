@@ -46,10 +46,12 @@ impl SquashCmd {
 
     let db = Database::open_file(&self.db)?;
     let cp_list = db.list_consistent_point();
-    match cp_list.iter().find(|x| x.lsn == self.start_lsn) {
-      Some(_) => {}
-      None => return Err(E::InconsistentStart.into()),
-    };
+    if self.start_lsn != 0 {
+      match cp_list.iter().find(|x| x.lsn == self.start_lsn) {
+        Some(_) => {}
+        None => return Err(E::InconsistentStart.into()),
+      }
+    }
     match cp_list.iter().find(|x| x.lsn == self.end_lsn) {
       Some(_) => {}
       None => return Err(E::InconsistentEnd.into()),
