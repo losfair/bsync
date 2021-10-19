@@ -83,7 +83,7 @@ jobs:
           name: transmitter
           path: ./bsync/bsync-transmit-dist
       - name: Install system dependencies
-        run: sudo apt install musl-tools
+        run: sudo apt install musl-tools lld
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -148,7 +148,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y curl sqlite3 perl5
+            pkg install -y curl sqlite3 perl5 gmake gcc
             curl https://sh.rustup.rs -sSf | sh -s -- -y
           run: |
             pwd
