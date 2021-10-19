@@ -248,7 +248,13 @@ echo -n "$HOME/.blkredo"
     drop(bar);
 
     log::info!("{} blocks changed. Fetching changes.", fetch_list.len());
-    let bar = ProgressBar::new(fetch_list.len() as u64 * LOG_BLOCK_SIZE as u64);
+    let bar = ProgressBar::new(
+      fetch_list
+        .iter()
+        .filter(|x| matches!(x, FetchOrAssumeExist::Fetch(_)))
+        .count() as u64
+        * LOG_BLOCK_SIZE as u64,
+    );
     bar.set_style(gen_pb_style("Fetch"));
     let mut total_redo_bytes: usize = 0;
     let mut total_reuse_bytes: usize = 0;
