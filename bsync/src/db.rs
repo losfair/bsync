@@ -73,11 +73,11 @@ impl Database {
 
     let instance_id: String = db
       .query_row(
-        "select v from blkredo_config where k = 'instance_id'",
+        "select v from bsync_config where k = 'instance_id'",
         params![],
         |r| r.get(0),
       )
-      .expect("missing instance_id in blkredo_config");
+      .expect("missing instance_id in bsync_config");
     log::info!(
       "Opened database at {:?} with instance id {}.",
       path,
@@ -135,7 +135,7 @@ impl Database {
     struct LsnMismatch(u64, u64);
 
     #[derive(Error, Debug)]
-    #[error("block with hash {0} was assumed to exist in CAS but does not exist anymore - did you run `blkredo squash` just now? please retry.")]
+    #[error("block with hash {0} was assumed to exist in CAS but does not exist anymore - did you run `bsync squash` just now? please retry.")]
     struct MissingHash(String);
 
     let mut db = self.db.lock();
@@ -346,13 +346,13 @@ fn run_migration(db: &mut Connection) -> Result<()> {
   let txn = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
   let table_exists: u32 = txn.query_row(
-    "select count(*) from sqlite_master where type='table' and name='blkredo_config'",
+    "select count(*) from sqlite_master where type='table' and name='bsync_config'",
     params![],
     |r| r.get(0),
   )?;
   let current_version: Option<String> = if table_exists == 1 {
     Some(txn.query_row(
-      "select v from blkredo_config where k = 'schema_version'",
+      "select v from bsync_config where k = 'schema_version'",
       params![],
       |r| r.get(0),
     )?)
@@ -372,7 +372,7 @@ fn run_migration(db: &mut Connection) -> Result<()> {
     }
   }
   txn.execute(
-    "replace into blkredo_config (k, v) values('schema_version', ?)",
+    "replace into bsync_config (k, v) values('schema_version', ?)",
     params![format!("{}", latest_version)],
   )?;
   txn.commit()?;

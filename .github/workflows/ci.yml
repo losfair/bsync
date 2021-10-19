@@ -1,4 +1,4 @@
-name: blkredo.build
+name: bsync.build
 on:
 - push
 
@@ -21,12 +21,12 @@ jobs:
       - name: Build
         run: ./build.sh
       - name: Build static
-        run: cd blkredo && cargo build --release --target x86_64-unknown-linux-musl --features vendored
+        run: cd bsync && cargo build --release --target x86_64-unknown-linux-musl --features vendored
       - name: Collect binaries
         run: |
           mkdir dist
-          cp ./target/release/blkredo ./dist/blkredo.x86_64-unknown-linux-gnu
-          cp ./target/x86_64-unknown-linux-musl/release/blkredo ./dist/blkredo.x86_64-unknown-linux-musl
+          cp ./target/release/bsync ./dist/bsync.x86_64-unknown-linux-gnu
+          cp ./target/x86_64-unknown-linux-musl/release/bsync ./dist/bsync.x86_64-unknown-linux-musl
       - name: Upload
         uses: actions/upload-artifact@v2
         with:

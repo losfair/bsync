@@ -1,9 +1,9 @@
 [package]
-name = "blkredo"
+name = "bsync"
 version = "0.0.0"
 edition = "2018"
 license = "MIT"
-repository = "https://github.com/losfair/blkredo"
+repository = "https://github.com/losfair/bsync"
 description = "An incremental backup tool for block devices."
 authors = ["Heyang Zhou <heyang.zhou@icloud.com>"]
 

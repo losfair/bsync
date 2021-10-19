@@ -17,7 +17,7 @@ create table `consistent_point_v1` (
   `created_at` integer not null
 );
 
-create table `blkredo_config` (
+create table `bsync_config` (
   `k` text not null primary key,
   `v` text not null
 );

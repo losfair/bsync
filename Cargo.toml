@@ -1,7 +1,7 @@
 [workspace]
 members = [
-  "blkredo",
-  "blkxmit",
+  "bsync",
+  "bsync-transmit",
 ]
 
 [profile.release]

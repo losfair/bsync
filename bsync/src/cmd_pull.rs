@@ -116,44 +116,44 @@ impl Pullcmd {
 
     log::info!("Remote architecture is {}.", remote_arch);
 
-    let blkxmit_image = *ARCH_BLKXMIT
+    let transmit_image = *ARCH_BLKXMIT
       .get(&remote_arch)
       .ok_or_else(|| ArchNotSupported(remote_arch.to_string()))?;
-    let blkxmit_sha256 = hex::encode(sha256hash(blkxmit_image));
-    let blkxmit_filename = format!("blkxmit.{}.{}", db.instance_id(), blkxmit_sha256);
+    let transmit_sha256 = hex::encode(sha256hash(transmit_image));
+    let transmit_filename = format!("transmit.{}.{}", db.instance_id(), transmit_sha256);
 
     let maybe_upload_path: String = exec_oneshot(
       &mut sess,
       &format!(
         r#"
-if [ -f ~/.blkredo/{filename} ]; then
-  echo {hash} ~/.blkredo/{filename} | sha256sum -c - > /dev/null
+if [ -f ~/.bsync/{filename} ]; then
+  echo {hash} ~/.bsync/{filename} | sha256sum -c - > /dev/null
   if [ $? -eq 0 ]; then
     exit 0
   fi
 fi
-mkdir -p ~/.blkredo
-echo -n "$HOME/.blkredo"
+mkdir -p ~/.bsync
+echo -n "$HOME/.bsync"
 "#,
-        filename = escape(Cow::Borrowed(blkxmit_filename.as_str())),
-        hash = escape(Cow::Borrowed(blkxmit_sha256.as_str()))
+        filename = escape(Cow::Borrowed(transmit_filename.as_str())),
+        hash = escape(Cow::Borrowed(transmit_sha256.as_str()))
       ),
     )?;
 
     if !maybe_upload_path.is_empty() {
-      let upload_path = format!("{}/{}", maybe_upload_path, blkxmit_filename);
+      let upload_path = format!("{}/{}", maybe_upload_path, transmit_filename);
       let mut remote_file = sess.scp_send(
         Path::new(&upload_path),
         0o755,
-        blkxmit_image.len() as u64,
+        transmit_image.len() as u64,
         None,
       )?;
-      remote_file.write_all(blkxmit_image)?;
+      remote_file.write_all(transmit_image)?;
       remote_file.send_eof()?;
       remote_file.wait_eof()?;
       remote_file.close()?;
       remote_file.wait_close()?;
-      println!("Installed blkxmit on remote host at {}.", upload_path);
+      println!("Installed transmit on remote host at {}.", upload_path);
     }
 
     if let Some(script) = config
@@ -207,8 +207,8 @@ echo -n "$HOME/.blkredo"
       let mut microprogress: usize = 0;
       bar.set_position(chunk[0] as u64);
       let script = format!(
-        "~/.blkredo/{} {} {} hash {} {}",
-        escape(Cow::Borrowed(blkxmit_filename.as_str())),
+        "~/.bsync/{} {} {} hash {} {}",
+        escape(Cow::Borrowed(transmit_filename.as_str())),
         escape(Cow::Borrowed(remote.image.as_str())),
         LOG_BLOCK_SIZE,
         chunk[0],
@@ -271,8 +271,8 @@ echo -n "$HOME/.blkredo"
         })
         .collect_vec();
       let script = format!(
-        "~/.blkredo/{} {} {} dump {}",
-        escape(Cow::Borrowed(blkxmit_filename.as_str())),
+        "~/.bsync/{} {} {} dump {}",
+        escape(Cow::Borrowed(transmit_filename.as_str())),
         escape(Cow::Borrowed(remote.image.as_str())),
         LOG_BLOCK_SIZE,
         fetch_chunk.iter().map(|x| format!("{}", x)).join(","),
