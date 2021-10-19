@@ -1,5 +1,6 @@
 use std::{
   borrow::Cow,
+  collections::HashSet,
   convert::TryFrom,
   fs::OpenOptions,
   io::{BufRead, BufReader, Read, Write},
@@ -267,15 +268,17 @@ echo -n "$HOME/.bsync"
           .read_block_hash((*x / LOG_BLOCK_SIZE) as u64)
           .unwrap_or(*ZERO_BLOCK_HASH)
       });
+      let mut seen_hashes: HashSet<[u8; 32]> = HashSet::new();
       for (&offset, (lh, rh)) in chunk.iter().zip(local_hashes.zip(remote_hashes)) {
         if lh != rh {
           log::debug!("block at offset {} changed", offset);
           let rh = <[u8; 32]>::try_from(rh)?;
-          if db.exists_in_cas(&rh) {
+          if seen_hashes.contains(&rh) || db.exists_in_cas(&rh) {
             fetch_list.push(FetchOrAssumeExist::AssumeExistWithHash(offset, rh));
           } else {
             fetch_list.push(FetchOrAssumeExist::Fetch(offset));
           }
+          seen_hashes.insert(rh);
         }
       }
     }
