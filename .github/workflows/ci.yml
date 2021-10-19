@@ -70,3 +70,67 @@ jobs:
         with:
           name: linux-binary
           path: ./bin-dist
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-10.15
+    needs: build-xmit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Fetch transmitter
+        uses: actions/download-artifact@v2
+        with:
+          name: transmitter
+          path: ./bsync/bsync-transmit-dist
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - name: Build
+        run: |
+          cd bsync
+          cargo build --release
+          cd ..
+          mkdir bin-dist
+          cp target/release/bsync ./bin-dist/
+      - name: Upload bin-dist
+        uses: actions/upload-artifact@v2
+        with:
+          name: macos-binary
+          path: ./bin-dist
+  build-freebsd:
+    name: Build (FreeBSD)
+    runs-on: macos-10.15
+    needs: build-xmit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Fetch transmitter
+        uses: actions/download-artifact@v2
+        with:
+          name: transmitter
+          path: ./bsync/bsync-transmit-dist
+      - name: Build
+        uses: vmactions/freebsd-vm@v0.1.5
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+          run: |
+            pwd
+            ls -lah
+            whoami
+            env
+            freebsd-version
+            cd bsync
+            cargo build --release
+            cd ..
+            mkdir bin-dist
+            cp ./target/release/bsync ./bin-dist/
+      - name: Upload bin-dist
+        uses: actions/upload-artifact@v2
+        with:
+          name: freebsd-binary
+          path: ./bin-dist
