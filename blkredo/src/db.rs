@@ -48,7 +48,12 @@ impl Database {
 
     let mut db = Connection::open(path)?;
 
-    db.execute_batch("pragma journal_mode = wal;")?;
+    db.execute_batch(
+      r#"
+      pragma journal_mode = wal;
+      pragma busy_timeout = 5000;
+    "#,
+    )?;
     run_migration(&mut db).map_err(MigrationError)?;
 
     let instance_id: String = db
