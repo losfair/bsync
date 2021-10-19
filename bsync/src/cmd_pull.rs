@@ -297,7 +297,7 @@ echo -n "$HOME/.bsync"
         * LOG_BLOCK_SIZE as u64,
     );
     bar.set_style(gen_pb_style("Fetch"));
-    let mut total_redo_bytes: usize = 0;
+    let mut total_download_bytes: usize = 0;
     let mut total_reuse_bytes: usize = 0;
     for chunk in &fetch_list.iter().chunks(DATA_FETCH_BATCH_SIZE) {
       let chunk = chunk.collect_vec();
@@ -349,7 +349,7 @@ echo -n "$HOME/.bsync"
         output.len(),
         lsn,
       );
-      total_redo_bytes += output.len();
+      total_download_bytes += output.len();
       total_reuse_bytes += (chunk.len() - fetch_chunk.len()) * LOG_BLOCK_SIZE;
     }
     bar.finish();
@@ -357,8 +357,8 @@ echo -n "$HOME/.bsync"
 
     db.add_consistent_point(lsn, remote_image_size);
     println!(
-      "Pulled {}B (of which {}B of data is reused)",
-      SizeFormatterBinary::new(total_redo_bytes as u64),
+      "Downloaded {}B and reused {}B.",
+      SizeFormatterBinary::new(total_download_bytes as u64),
       SizeFormatterBinary::new(total_reuse_bytes as u64),
     );
 
