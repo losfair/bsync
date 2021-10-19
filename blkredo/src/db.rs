@@ -42,10 +42,14 @@ pub struct ConsistentPoint {
 
 impl Database {
   pub fn open_file(path: &Path) -> Result<Self> {
+    #[derive(Error, Debug)]
+    #[error("migration failed: {0}")]
+    struct MigrationError(anyhow::Error);
+
     let mut db = Connection::open(path)?;
 
     db.execute_batch("pragma journal_mode = wal;")?;
-    run_migration(&mut db)?;
+    run_migration(&mut db).map_err(MigrationError)?;
 
     let instance_id: String = db
       .query_row(
@@ -288,6 +292,10 @@ impl Drop for Snapshot {
 }
 
 fn run_migration(db: &mut Connection) -> Result<()> {
+  #[derive(Error, Debug)]
+  #[error("database schema version is newer than the supported version")]
+  struct SchemaTooNew;
+
   let txn = db.transaction()?;
 
   let table_exists: u32 = txn.query_row(
@@ -305,6 +313,10 @@ fn run_migration(db: &mut Connection) -> Result<()> {
     None
   };
   let current_version: u64 = current_version.map(|x| x.parse()).transpose()?.unwrap_or(0);
+  let latest_version: u64 = VERSIONS.last().unwrap().0.parse().unwrap();
+  if current_version > latest_version {
+    return Err(SchemaTooNew.into());
+  }
   for &(version, sql) in VERSIONS {
     let version: u64 = version.parse().unwrap();
     if version > current_version {
@@ -314,7 +326,7 @@ fn run_migration(db: &mut Connection) -> Result<()> {
   }
   txn.execute(
     "replace into blkredo_config (k, v) values('schema_version', ?)",
-    params![VERSIONS.last().unwrap().0],
+    params![format!("{}", latest_version)],
   )?;
   txn.commit()?;
   Ok(())
