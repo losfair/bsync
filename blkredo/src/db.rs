@@ -40,6 +40,11 @@ pub struct ConsistentPoint {
   pub created_at: u64,
 }
 
+pub enum RedoContentOrHash<'a> {
+  Content(&'a [u8]),
+  Hash([u8; 32]),
+}
+
 impl Database {
   pub fn open_file(path: &Path, create: bool) -> Result<Self> {
     #[derive(Error, Debug)]
@@ -123,11 +128,15 @@ impl Database {
   pub fn write_redo<'a>(
     &self,
     base_lsn: u64,
-    data: impl IntoIterator<Item = (u64, &'a [u8])>,
+    data: impl IntoIterator<Item = (u64, RedoContentOrHash<'a>)>,
   ) -> Result<u64> {
     #[derive(Error, Debug)]
     #[error("base lsn mismatch: expecting {0}, got {1}")]
     struct LsnMismatch(u64, u64);
+
+    #[derive(Error, Debug)]
+    #[error("block with hash {0} was assumed to exist in CAS but does not exist anymore - did you run `blkredo squash` just now? please retry.")]
+    struct MissingHash(String);
 
     let mut db = self.db.lock();
     let txn = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -150,17 +159,25 @@ impl Database {
         return Err(LsnMismatch(base_lsn, prev_max_lsn).into());
       }
 
-      for (block_id, content) in data {
-        let content = align_block(content);
-        let hash: [u8; 32] = blake3::hash(&content).into();
+      for (block_id, body) in data {
+        let hash: [u8; 32] = match body {
+          RedoContentOrHash::Content(x) => blake3::hash(x).into(),
+          RedoContentOrHash::Hash(x) => x,
+        };
         let has_cas: Option<Vec<u8>> = has_cas_stmt
           .query_row(params![&hash[..]], |r| r.get(0))
           .optional()
           .unwrap();
         if has_cas.is_none() {
-          insert_cas_stmt
-            .execute(params![&hash[..], &content[..]])
-            .unwrap();
+          match body {
+            RedoContentOrHash::Content(content) => {
+              let content = align_block(content);
+              insert_cas_stmt
+                .execute(params![&hash[..], &content[..]])
+                .unwrap();
+            }
+            RedoContentOrHash::Hash(_) => return Err(MissingHash(hex::encode(&hash)).into()),
+          }
         }
         insert_redo_stmt
           .execute(params![block_id, &hash[..]])
@@ -185,6 +202,20 @@ impl Database {
       .query_row(params![], |r| r.get(0))
       .unwrap();
     x.unwrap_or(0)
+  }
+
+  pub fn exists_in_cas(&self, hash: &[u8; 32]) -> bool {
+    let v: Option<u32> = self
+      .db
+      .lock()
+      .query_row(
+        "select 1 from cas_v1 where hash = ?",
+        params![&hash[..]],
+        |r| r.get(0),
+      )
+      .optional()
+      .unwrap();
+    v.is_some()
   }
 
   pub fn list_consistent_point(&self) -> Vec<ConsistentPoint> {

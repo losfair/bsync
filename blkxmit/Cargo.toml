@@ -5,3 +5,4 @@ edition = "2018"
 
 [dependencies]
 blake3 = "1.0.0"
+snap = "1"

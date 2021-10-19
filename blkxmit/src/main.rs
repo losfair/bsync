@@ -58,6 +58,7 @@ fn main() {
         .collect();
       f.seek(SeekFrom::End(0)).unwrap();
       let file_size = f.stream_position().unwrap();
+      let mut encoder = snap::write::FrameEncoder::new(&mut stdout);
 
       for offset in offset_list {
         let end_offset = offset
@@ -69,7 +70,7 @@ fn main() {
         f.seek(SeekFrom::Start(offset as u64)).unwrap();
         f.read_exact(&mut buf[..read_len]).unwrap();
         buf[read_len..].fill(0);
-        stdout.write_all(&buf).unwrap();
+        encoder.write_all(&buf).unwrap();
       }
     }
     _ => panic!("bad op: {}", op),

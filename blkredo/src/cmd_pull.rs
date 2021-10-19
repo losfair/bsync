@@ -1,5 +1,6 @@
 use std::{
   borrow::Cow,
+  convert::TryFrom,
   fs::OpenOptions,
   io::{BufRead, BufReader, Read, Write},
   net::{IpAddr, SocketAddr, TcpStream},
@@ -20,7 +21,7 @@ use thiserror::Error;
 use crate::{
   blob::{ARCH_BLKXMIT, ZERO_BLOCK_HASH},
   config::{BackupConfig, LOG_BLOCK_SIZE},
-  db::Database,
+  db::{Database, RedoContentOrHash},
   util::sha256hash,
 };
 
@@ -33,6 +34,11 @@ pub struct Pullcmd {
   /// Path to the config.
   #[structopt(short, long)]
   config: PathBuf,
+}
+
+enum FetchOrAssumeExist {
+  Fetch(usize),
+  AssumeExistWithHash(usize, [u8; 32]),
 }
 
 impl Pullcmd {
@@ -181,7 +187,7 @@ echo -n "$HOME/.blkredo"
     let snapshot = db.snapshot(lsn)?;
     log::info!("Starting from LSN {}.", lsn);
 
-    let mut fetch_list: Vec<usize> = vec![];
+    let mut fetch_list: Vec<FetchOrAssumeExist> = vec![];
 
     let gen_pb_style = |name: &str| {
       ProgressStyle::default_bar().template(
@@ -208,10 +214,15 @@ echo -n "$HOME/.blkredo"
         chunk[0],
         chunk.len(),
       );
-      let output = exec_oneshot_bin(&mut sess, &script, |inc| {
-        microprogress += inc;
-        bar.set_position(chunk[0] as u64 + (microprogress as u64 / 32) * LOG_BLOCK_SIZE as u64);
-      })?;
+      let output = exec_oneshot_bin(
+        &mut sess,
+        &script,
+        |inc| {
+          microprogress += inc;
+          bar.set_position(chunk[0] as u64 + (microprogress as u64 / 32) * LOG_BLOCK_SIZE as u64);
+        },
+        |x| Box::new(x),
+      )?;
       if output.len() != chunk.len() * 32 {
         return Err(ByteCountMismatch(chunk.len() * 32, output.len()).into());
       }
@@ -224,7 +235,12 @@ echo -n "$HOME/.blkredo"
       for (&offset, (lh, rh)) in chunk.iter().zip(local_hashes.zip(remote_hashes)) {
         if lh != rh {
           log::debug!("block at offset {} changed", offset);
-          fetch_list.push(offset);
+          let rh = <[u8; 32]>::try_from(rh)?;
+          if db.exists_in_cas(&rh) {
+            fetch_list.push(FetchOrAssumeExist::AssumeExistWithHash(offset, rh));
+          } else {
+            fetch_list.push(FetchOrAssumeExist::Fetch(offset));
+          }
         }
       }
     }
@@ -235,30 +251,53 @@ echo -n "$HOME/.blkredo"
     let bar = ProgressBar::new(fetch_list.len() as u64 * LOG_BLOCK_SIZE as u64);
     bar.set_style(gen_pb_style("Fetch"));
     let mut total_redo_bytes: usize = 0;
-    for chunk in &fetch_list.iter().copied().chunks(DATA_FETCH_BATCH_SIZE) {
+    for chunk in &fetch_list.iter().chunks(DATA_FETCH_BATCH_SIZE) {
       let chunk = chunk.collect_vec();
+      let fetch_chunk = chunk
+        .iter()
+        .filter_map(|x| {
+          if let FetchOrAssumeExist::Fetch(x) = x {
+            Some(*x)
+          } else {
+            None
+          }
+        })
+        .collect_vec();
       let script = format!(
         "~/.blkredo/{} {} {} dump {}",
         escape(Cow::Borrowed(blkxmit_filename.as_str())),
         escape(Cow::Borrowed(remote.image.as_str())),
         LOG_BLOCK_SIZE,
-        chunk.iter().map(|x| format!("{}", x)).join(","),
+        fetch_chunk.iter().map(|x| format!("{}", x)).join(","),
       );
-      let output = exec_oneshot_bin(&mut sess, &script, |inc| bar.inc(inc as u64))?;
-      if output.len() != chunk.len() * LOG_BLOCK_SIZE {
-        return Err(ByteCountMismatch(chunk.len() * LOG_BLOCK_SIZE, output.len()).into());
+      let output = exec_oneshot_bin(
+        &mut sess,
+        &script,
+        |inc| bar.inc(inc as u64),
+        |x| Box::new(snap::read::FrameDecoder::new(x)),
+      )?;
+      if output.len() != fetch_chunk.len() * LOG_BLOCK_SIZE {
+        return Err(ByteCountMismatch(fetch_chunk.len() * LOG_BLOCK_SIZE, output.len()).into());
       }
+      let mut output_chunks = output.chunks(LOG_BLOCK_SIZE);
       lsn = db.write_redo(
         lsn,
         chunk
           .iter()
           .copied()
-          .zip(output.chunks(LOG_BLOCK_SIZE))
+          .map(|x| match x {
+            FetchOrAssumeExist::Fetch(x) => (
+              *x,
+              RedoContentOrHash::Content(output_chunks.next().unwrap()),
+            ),
+            FetchOrAssumeExist::AssumeExistWithHash(x, h) => (*x, RedoContentOrHash::Hash(*h)),
+          })
           .map(|(offset, data)| ((offset / LOG_BLOCK_SIZE) as u64, data)),
       )?;
       log::info!(
-        "Written {} redo log entries. Total size is {} bytes. Last LSN is {}.",
+        "Written {} redo log entries, of which {} are fetched. Total download size is {} bytes. Last LSN is {}.",
         chunk.len(),
+        fetch_chunk.len(),
         output.len(),
         lsn,
       );
@@ -293,20 +332,26 @@ fn exec_oneshot(sess: &mut Session, cmd: &str) -> Result<String> {
   exec_oneshot_in(&mut channel, cmd)
 }
 
-fn exec_oneshot_bin(sess: &mut Session, cmd: &str, progress: impl FnMut(usize)) -> Result<Vec<u8>> {
+fn exec_oneshot_bin<D: for<'a> FnMut(&'a mut dyn Read) -> Box<dyn Read + 'a>>(
+  sess: &mut Session,
+  cmd: &str,
+  progress: impl FnMut(usize),
+  decoder_gen: D,
+) -> Result<Vec<u8>> {
   let mut channel = sess.channel_session()?;
-  exec_oneshot_bin_in(&mut channel, cmd, progress)
+  exec_oneshot_bin_in(&mut channel, cmd, progress, decoder_gen)
 }
 
 fn exec_oneshot_in(channel: &mut Channel, cmd: &str) -> Result<String> {
-  exec_oneshot_bin_in(channel, cmd, |_| ())
+  exec_oneshot_bin_in(channel, cmd, |_| (), |x| Box::new(x))
     .and_then(|x| String::from_utf8(x).map_err(anyhow::Error::from))
 }
 
-fn exec_oneshot_bin_in(
+fn exec_oneshot_bin_in<D: for<'a> FnMut(&'a mut dyn Read) -> Box<dyn Read + 'a>>(
   channel: &mut Channel,
   cmd: &str,
   mut progress: impl FnMut(usize),
+  mut decoder_gen: D,
 ) -> Result<Vec<u8>> {
   #[derive(Debug, Error)]
   #[error("remote returned error {0}")]
@@ -315,7 +360,8 @@ fn exec_oneshot_bin_in(
   channel.exec(cmd)?;
   let mut data = Vec::new();
   {
-    let mut reader = BufReader::new(&mut *channel);
+    let mut reader = decoder_gen(&mut *channel);
+    let mut reader = BufReader::new(&mut *reader);
     loop {
       let buf = reader.fill_buf()?;
       if buf.len() == 0 {
