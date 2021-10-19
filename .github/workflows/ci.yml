@@ -5,7 +5,7 @@ on:
 jobs:
   build-xmit:
     name: Build transmitter
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-20.04 # 20.04 required for `llvm-strip`
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -49,6 +49,8 @@ jobs:
         with:
           profile: minimal
           toolchain: stable
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
       - name: Build
         run: |
           cd bsync
