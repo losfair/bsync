@@ -124,6 +124,7 @@ jobs:
             whoami
             env
             freebsd-version
+            source $HOME/.cargo/env
             cd bsync
             cargo build --release
             cd ..
