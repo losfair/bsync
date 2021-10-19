@@ -37,6 +37,7 @@ indicatif = "0.16.2"
 sha2 = "0.9.8"
 snap = "1"
 serde_json = "1"
+dirs = "4.0.0"
 
 [features]
 vendored = ["ssh2/vendored-openssl", "rusqlite/bundled"]

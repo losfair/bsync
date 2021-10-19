@@ -15,7 +15,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use shell_escape::unix::escape;
 use size_format::SizeFormatterBinary;
-use ssh2::{Channel, CheckResult, Session};
+use ssh2::{Channel, CheckResult, KnownHostFileKind, Session};
 use structopt::StructOpt;
 use thiserror::Error;
 
@@ -112,7 +112,10 @@ impl Pullcmd {
         log::warn!("`remote.verify` is set to `insecure`, skipping host key verification");
       }
       HostVerification::Known => {
-        let known_hosts = sess.known_hosts()?;
+        let mut known_hosts = sess.known_hosts()?;
+        if let Some(home) = dirs::home_dir() {
+          let _ = known_hosts.read_file(&home.join(".ssh/known_hosts"), KnownHostFileKind::OpenSSH);
+        }
         match known_hosts.check(&remote.server, host_key) {
           CheckResult::Match => {}
           CheckResult::NotFound => {
