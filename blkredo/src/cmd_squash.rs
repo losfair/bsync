@@ -6,12 +6,16 @@ use thiserror::Error;
 
 use crate::db::Database;
 
-/// Incrementally pull updates of an image.
+/// Squash logs.
 #[derive(Debug, StructOpt)]
 pub struct SquashCmd {
-  /// The LSN before which all logs will be squashed.
+  /// Start LSN.
   #[structopt(long)]
-  before_lsn: u64,
+  start_lsn: u64,
+
+  /// End LSN.
+  #[structopt(long)]
+  end_lsn: u64,
 
   /// Data loss confirmation.
   #[structopt(long)]
@@ -30,24 +34,32 @@ impl SquashCmd {
   pub fn run(&self) -> Result<()> {
     #[derive(Error, Debug)]
     enum E {
-      #[error("the provided LSN is not a consistent point")]
-      Inconsistent,
+      #[error("the provided `start_lsn` is not a consistent point")]
+      InconsistentStart,
+
+      #[error("the provided `end_lsn` is not a consistent point")]
+      InconsistentEnd,
 
       #[error("squash removes history - please confirm by adding the flag `--data-loss`.")]
       DataLoss,
     }
 
-    let db = Database::open_file(&self.db, false)?;
+    let db = Database::open_file(&self.db)?;
     let cp_list = db.list_consistent_point();
-    match cp_list.iter().find(|x| x.lsn == self.before_lsn) {
+    match cp_list.iter().find(|x| x.lsn == self.start_lsn) {
       Some(_) => {}
-      None => return Err(E::Inconsistent.into()),
+      None => return Err(E::InconsistentStart.into()),
     };
+    match cp_list.iter().find(|x| x.lsn == self.end_lsn) {
+      Some(_) => {}
+      None => return Err(E::InconsistentEnd.into()),
+    };
+
     if !self.data_loss {
       return Err(E::DataLoss.into());
     }
 
-    db.squash(self.before_lsn);
+    db.squash(self.start_lsn, self.end_lsn);
     db.cas_gc();
     if self.vacuum {
       db.vacuum();

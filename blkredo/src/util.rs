@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use sha2::{Digest, Sha256};
+
 use crate::config::LOG_BLOCK_SIZE;
 
 pub fn align_block(data: &[u8]) -> Cow<[u8]> {
@@ -18,4 +20,10 @@ pub fn align_block(data: &[u8]) -> Cow<[u8]> {
   } else {
     Cow::Borrowed(data)
   }
+}
+
+pub fn sha256hash(data: &[u8]) -> [u8; 32] {
+  let mut h = Sha256::new();
+  h.update(data);
+  h.finalize().into()
 }

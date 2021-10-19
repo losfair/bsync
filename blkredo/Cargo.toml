@@ -33,6 +33,7 @@ lazy_static = "1"
 size_format = "1.0.2"
 fs2 = "0.4.3"
 indicatif = "0.16.2"
+sha2 = "0.9.8"
 
 [features]
 vendored = ["ssh2/vendored-openssl", "rusqlite/bundled"]

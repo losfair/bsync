@@ -1,4 +1,5 @@
 mod blob;
+mod cmd_list;
 mod cmd_pull;
 mod cmd_replay;
 mod cmd_squash;
@@ -7,6 +8,7 @@ mod db;
 mod util;
 
 use anyhow::Result;
+use cmd_list::Listcmd;
 use cmd_pull::Pullcmd;
 use cmd_replay::Replaycmd;
 use cmd_squash::SquashCmd;
@@ -22,6 +24,7 @@ struct Opt {
 enum Subcmd {
   Pull(Pullcmd),
   Replay(Replaycmd),
+  List(Listcmd),
   Squash(SquashCmd),
 }
 
@@ -33,6 +36,9 @@ fn main() -> Result<()> {
       cmd.run()?;
     }
     Subcmd::Replay(cmd) => {
+      cmd.run()?;
+    }
+    Subcmd::List(cmd) => {
       cmd.run()?;
     }
     Subcmd::Squash(cmd) => {

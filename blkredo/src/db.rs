@@ -15,11 +15,22 @@ use thiserror::Error;
 
 use crate::util::align_block;
 
+macro_rules! migration {
+  ($id:ident, $($version:expr,)*) => {
+      static $id: &'static [(&'static str, &'static str)] = &[
+        $(($version, include_str!(concat!("./migration/", $version, ".sql"))),)*
+      ];
+  };
+}
+
+migration!(VERSIONS, "000001", "000002",);
+
 static SNAPSHOT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct Database {
   db: Arc<Mutex<Connection>>,
+  instance_id: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -30,20 +41,32 @@ pub struct ConsistentPoint {
 }
 
 impl Database {
-  pub fn open_file(path: &Path, read_only: bool) -> Result<Self> {
-    let db = Connection::open_with_flags(
-      path,
-      if read_only {
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-      } else {
-        Default::default()
-      },
-    )?;
+  pub fn open_file(path: &Path) -> Result<Self> {
+    let mut db = Connection::open(path)?;
 
-    db.execute_batch(include_str!("./init.sql"))?;
+    db.execute_batch("pragma journal_mode = wal;")?;
+    run_migration(&mut db)?;
+
+    let instance_id: String = db
+      .query_row(
+        "select v from blkredo_config where k = 'instance_id'",
+        params![],
+        |r| r.get(0),
+      )
+      .expect("missing instance_id in blkredo_config");
+    log::info!(
+      "Opened database at {:?} with instance id {}.",
+      path,
+      instance_id
+    );
     Ok(Self {
       db: Arc::new(Mutex::new(db)),
+      instance_id: Arc::from(instance_id.as_str()),
     })
+  }
+
+  pub fn instance_id(&self) -> &str {
+    &*self.instance_id
   }
 
   pub fn snapshot(&self, lsn: u64) -> Result<Snapshot> {
@@ -175,21 +198,21 @@ impl Database {
     stmt.execute(params![lsn, size, now]).unwrap();
   }
 
-  pub fn squash(&self, before_lsn: u64) {
+  pub fn squash(&self, start_lsn: u64, end_lsn: u64) {
     let mut db = self.db.lock();
     let txn = db.transaction().unwrap();
     txn.execute_batch(&format!(r#"
-      delete from consistent_point_v1 where lsn < {};
+      delete from consistent_point_v1 where lsn > {from} and lsn < {to};
       create temp table squash (
         `lsn` integer not null primary key
       );
       insert into temp.squash (lsn)
         select max(lsn) from redo_v1
-          where lsn <= {}
+          where lsn > {from} and lsn <= {to}
           group by block_id;
-      delete from redo_v1 where lsn <= {} and not exists (select * from temp.squash where lsn = redo_v1.lsn);
+      delete from redo_v1 where lsn > {from} and lsn <= {to} and not exists (select * from temp.squash where lsn = redo_v1.lsn);
       drop table temp.squash;
-    "#, before_lsn, before_lsn, before_lsn)).unwrap();
+    "#, from = start_lsn, to = end_lsn)).unwrap();
     txn.commit().unwrap();
   }
 
@@ -262,4 +285,37 @@ impl Drop for Snapshot {
       ))
       .unwrap();
   }
+}
+
+fn run_migration(db: &mut Connection) -> Result<()> {
+  let txn = db.transaction()?;
+
+  let table_exists: u32 = txn.query_row(
+    "select count(*) from sqlite_master where type='table' and name='blkredo_config'",
+    params![],
+    |r| r.get(0),
+  )?;
+  let current_version: Option<String> = if table_exists == 1 {
+    Some(txn.query_row(
+      "select v from blkredo_config where k = 'schema_version'",
+      params![],
+      |r| r.get(0),
+    )?)
+  } else {
+    None
+  };
+  let current_version: u64 = current_version.map(|x| x.parse()).transpose()?.unwrap_or(0);
+  for &(version, sql) in VERSIONS {
+    let version: u64 = version.parse().unwrap();
+    if version > current_version {
+      txn.execute_batch(sql)?;
+      log::info!("Applied migration {}.", version);
+    }
+  }
+  txn.execute(
+    "replace into blkredo_config (k, v) values('schema_version', ?)",
+    params![VERSIONS.last().unwrap().0],
+  )?;
+  txn.commit()?;
+  Ok(())
 }

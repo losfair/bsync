@@ -21,6 +21,7 @@ use crate::{
   blob::{ARCH_BLKXMIT, ZERO_BLOCK_HASH},
   config::{BackupConfig, LOG_BLOCK_SIZE},
   db::Database,
+  util::sha256hash,
 };
 
 const DIFF_BATCH_SIZE: usize = 16384;
@@ -96,7 +97,7 @@ impl Pullcmd {
       sess.userauth_agent(&remote.user)?;
     }
 
-    let db = Database::open_file(Path::new(&config.local.db), false)?;
+    let db = Database::open_file(Path::new(&config.local.db))?;
 
     let remote_uname = exec_oneshot(&mut sess, "uname -m; uname -s")?;
     let mut remote_uname_segs = remote_uname.split("\n");
@@ -112,21 +113,24 @@ impl Pullcmd {
     let blkxmit_image = *ARCH_BLKXMIT
       .get(&remote_arch)
       .ok_or_else(|| ArchNotSupported(remote_arch.to_string()))?;
-
-    let blkxmit_hash = blake3::hash(blkxmit_image);
-    let blkxmit_filename = format!("blkxmit.{}", blkxmit_hash);
+    let blkxmit_sha256 = hex::encode(sha256hash(blkxmit_image));
+    let blkxmit_filename = format!("blkxmit.{}.{}", db.instance_id(), blkxmit_sha256);
 
     let maybe_upload_path: String = exec_oneshot(
       &mut sess,
       &format!(
         r#"
-set -e
-if [ ! -f ~/.blkredo/{} ]; then
-  mkdir -p ~/.blkredo
-  echo -n "$HOME/.blkredo"
+if [ -f ~/.blkredo/{filename} ]; then
+  echo {hash} ~/.blkredo/{filename} | sha256sum -c - > /dev/null
+  if [ $? -eq 0 ]; then
+    exit 0
+  fi
 fi
+mkdir -p ~/.blkredo
+echo -n "$HOME/.blkredo"
 "#,
-        escape(Cow::Borrowed(blkxmit_filename.as_str()))
+        filename = escape(Cow::Borrowed(blkxmit_filename.as_str())),
+        hash = escape(Cow::Borrowed(blkxmit_sha256.as_str()))
       ),
     )?;
 
