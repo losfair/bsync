@@ -26,6 +26,10 @@ pub struct BackupRemoteConfig {
   /// Remote image path.
   pub image: String,
 
+  /// Host verification method.
+  #[serde(default)]
+  pub verify: HostVerification,
+
   /// Scripts.
   pub scripts: Option<BackupRemoteScripts>,
 }
@@ -35,6 +39,20 @@ pub struct BackupRemoteScripts {
   pub no_pull_lock: Option<bool>,
   pub pre_pull: Option<String>,
   pub post_pull: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostVerification {
+  Insecure,
+  Known,
+  Dnssec,
+}
+
+impl Default for HostVerification {
+  fn default() -> Self {
+    Self::Known
+  }
 }
 
 #[derive(Deserialize)]

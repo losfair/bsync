@@ -36,6 +36,7 @@ remote:
   port: 7219
   user: root
   key: ./id_ed25519
+  verify: insecure
   image: /root/test.img
 local:
   db: ./backup.db

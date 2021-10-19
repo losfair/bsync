@@ -14,13 +14,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use shell_escape::unix::escape;
 use size_format::SizeFormatterBinary;
-use ssh2::{Channel, Session};
+use ssh2::{Channel, CheckResult, Session};
 use structopt::StructOpt;
 use thiserror::Error;
 
 use crate::{
   blob::{ARCH_BLKXMIT, ZERO_BLOCK_HASH},
-  config::{BackupConfig, LOG_BLOCK_SIZE},
+  config::{BackupConfig, HostVerification, LOG_BLOCK_SIZE},
   db::{Database, RedoContentOrHash},
   util::sha256hash,
 };
@@ -67,6 +67,14 @@ impl Pullcmd {
     #[error("cannot acquire pull lock on {0}: {1}")]
     struct LockAcquire(String, std::io::Error);
 
+    #[derive(Error, Debug)]
+    #[error("no host key")]
+    struct NoHostKey;
+
+    #[derive(Error, Debug)]
+    #[error("host key verification error: {0}")]
+    struct HostKeyVerifyError(&'static str);
+
     let config = BackupConfig::must_load_from_file(&self.config);
     let remote = &config.remote;
 
@@ -96,6 +104,33 @@ impl Pullcmd {
     let mut sess = Session::new()?;
     sess.set_tcp_stream(tcp);
     sess.handshake()?;
+
+    let (host_key, _host_key_type) = sess.host_key().ok_or(NoHostKey)?;
+    match config.remote.verify {
+      HostVerification::Insecure => {
+        log::warn!("`remote.verify` is set to `insecure`, skipping host key verification");
+      }
+      HostVerification::Known => {
+        let known_hosts = sess.known_hosts()?;
+        match known_hosts.check(&remote.server, host_key) {
+          CheckResult::Match => {}
+          CheckResult::NotFound => {
+            return Err(
+              HostKeyVerifyError("not found - please connect to the remote host once").into(),
+            );
+          }
+          CheckResult::Mismatch => {
+            return Err(HostKeyVerifyError("mismatch - possible mitm").into());
+          }
+          CheckResult::Failure => {
+            return Err(HostKeyVerifyError("unknown").into());
+          }
+        }
+      }
+      HostVerification::Dnssec => {
+        return Err(HostKeyVerifyError("dnssec not yet implemented").into());
+      }
+    }
 
     if let Some(x) = &remote.key {
       sess.userauth_pubkey_file(&remote.user, None, Path::new(x), None)?;
