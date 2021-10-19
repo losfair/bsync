@@ -61,7 +61,7 @@ impl SquashCmd {
       return Err(E::DataLoss.into());
     }
 
-    db.squash(self.start_lsn, self.end_lsn);
+    db.squash(self.start_lsn, self.end_lsn)?;
     db.cas_gc();
     if self.vacuum {
       db.vacuum();

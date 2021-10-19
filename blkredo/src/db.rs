@@ -5,12 +5,12 @@ use std::{
     atomic::{AtomicU64, Ordering},
     Arc,
   },
-  time::{Instant, SystemTime, UNIX_EPOCH},
+  time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Result;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use thiserror::Error;
 
 use crate::util::align_block;
@@ -56,9 +56,14 @@ impl Database {
     db.execute_batch(
       r#"
       pragma journal_mode = wal;
-      pragma busy_timeout = 5000;
     "#,
     )?;
+    db.busy_handler(Some(|i| {
+      log::debug!("Waiting for lock on database (attempt {})", i);
+      std::thread::sleep(Duration::from_millis(100));
+      true
+    }))?;
+
     run_migration(&mut db).map_err(MigrationError)?;
 
     let instance_id: String = db
@@ -125,7 +130,7 @@ impl Database {
     struct LsnMismatch(u64, u64);
 
     let mut db = self.db.lock();
-    let txn = db.transaction().unwrap();
+    let txn = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let max_lsn: Option<u64>;
     {
       let mut get_max_lsn_stmt = txn.prepare_cached("select max(lsn) from redo_v1").unwrap();
@@ -212,9 +217,9 @@ impl Database {
     stmt.execute(params![lsn, size, now]).unwrap();
   }
 
-  pub fn squash(&self, start_lsn: u64, end_lsn: u64) {
+  pub fn squash(&self, start_lsn: u64, end_lsn: u64) -> Result<()> {
     let mut db = self.db.lock();
-    let txn = db.transaction().unwrap();
+    let txn = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     txn.execute_batch(&format!(r#"
       delete from consistent_point_v1 where lsn > {from} and lsn < {to};
       create temp table squash (
@@ -228,6 +233,7 @@ impl Database {
       drop table temp.squash;
     "#, from = start_lsn, to = end_lsn)).unwrap();
     txn.commit().unwrap();
+    Ok(())
   }
 
   pub fn cas_gc(&self) {
@@ -306,7 +312,7 @@ fn run_migration(db: &mut Connection) -> Result<()> {
   #[error("database schema version is newer than the supported version")]
   struct SchemaTooNew;
 
-  let txn = db.transaction()?;
+  let txn = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
   let table_exists: u32 = txn.query_row(
     "select count(*) from sqlite_master where type='table' and name='blkredo_config'",
