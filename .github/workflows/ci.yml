@@ -116,7 +116,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y curl
+            pkg install -y curl sqlite3
             curl https://sh.rustup.rs -sSf | sh -s -- -y
           run: |
             pwd
@@ -130,6 +130,7 @@ jobs:
             cd ..
             mkdir bin-dist
             cp ./target/release/bsync ./bin-dist/
+            rm -rf ./target
       - name: Upload bin-dist
         uses: actions/upload-artifact@v2
         with:
