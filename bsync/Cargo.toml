@@ -6,6 +6,7 @@ license = "MIT"
 repository = "https://github.com/losfair/bsync"
 description = "An incremental backup tool for block devices."
 authors = ["Heyang Zhou <heyang.zhou@icloud.com>"]
+include = ["/src", "/bsync-transmit-dist"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
