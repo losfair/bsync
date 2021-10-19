@@ -3,9 +3,9 @@ on:
 - push
 
 jobs:
-  build-linux:
-    name: Build (Linux)
-    runs-on: ubuntu-20.04
+  build-xmit:
+    name: Build transmitter
+    runs-on: ubuntu-18.04
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -19,16 +19,52 @@ jobs:
       - name: Add targets
         run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
       - name: Build
-        run: ./build.sh
-      - name: Build static
-        run: cd bsync && cargo build --release --target x86_64-unknown-linux-musl --features vendored
-      - name: Collect binaries
         run: |
+          cd bsync-transmit
+          cargo build --release --target x86_64-unknown-linux-musl
+          cargo build --release --target aarch64-unknown-linux-musl
           mkdir dist
-          cp ./target/release/bsync ./dist/bsync.x86_64-unknown-linux-gnu
-          cp ./target/x86_64-unknown-linux-musl/release/bsync ./dist/bsync.x86_64-unknown-linux-musl
+          cp ../target/x86_64-unknown-linux-musl/release/bsync-transmit ./dist/bsync-transmit.x86_64-unknown-linux-musl
+          cp ../target/aarch64-unknown-linux-musl/release/bsync-transmit ./dist/bsync-transmit.aarch64-unknown-linux-musl
+          llvm-strip ./dist/*
       - name: Upload
         uses: actions/upload-artifact@v2
         with:
-          name: exe-linux
-          path: ./dist
+          name: transmitter
+          path: ./bsync-transmit/dist
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-18.04
+    needs: build-xmit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Fetch transmitter
+        uses: actions/download-artifact@v2
+        with:
+          name: transmitter
+          path: ./bsync/bsync-transmit-dist
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - name: Build
+        run: |
+          cd bsync
+          cargo build --release
+          cargo deb --no-strip
+          cd ..
+          mkdir deb-dist bin-dist
+          cp target/debian/*.deb ./deb-dist/
+          cp target/release/bsync ./bin-dist/
+      - name: Upload deb-dist
+        uses: actions/upload-artifact@v2
+        with:
+          name: debian-package
+          path: ./deb-dist
+      - name: Upload bin-dist
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-binary
+          path: ./bin-dist
