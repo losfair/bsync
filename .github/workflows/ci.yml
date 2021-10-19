@@ -60,6 +60,8 @@ jobs:
           mkdir deb-dist bin-dist
           cp target/debian/*.deb ./deb-dist/
           cp target/release/bsync ./bin-dist/
+      - name: Run integration test
+        run: ./test/run.sh
       - name: Upload deb-dist
         uses: actions/upload-artifact@v2
         with:
