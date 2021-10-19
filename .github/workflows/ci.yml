@@ -82,14 +82,14 @@ jobs:
         with:
           name: transmitter
           path: ./bsync/bsync-transmit-dist
+      - name: Install system dependencies
+        run: sudo apt install musl-tools
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           target: x86_64-unknown-linux-musl
-      - name: Install cargo-deb
-        run: cargo install cargo-deb
       - name: Build
         run: |
           cd bsync
@@ -148,7 +148,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y curl sqlite3
+            pkg install -y curl sqlite3 perl5
             curl https://sh.rustup.rs -sSf | sh -s -- -y
           run: |
             pwd
