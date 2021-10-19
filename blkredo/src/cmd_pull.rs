@@ -251,6 +251,7 @@ echo -n "$HOME/.blkredo"
     let bar = ProgressBar::new(fetch_list.len() as u64 * LOG_BLOCK_SIZE as u64);
     bar.set_style(gen_pb_style("Fetch"));
     let mut total_redo_bytes: usize = 0;
+    let mut total_reuse_bytes: usize = 0;
     for chunk in &fetch_list.iter().chunks(DATA_FETCH_BATCH_SIZE) {
       let chunk = chunk.collect_vec();
       let fetch_chunk = chunk
@@ -302,14 +303,16 @@ echo -n "$HOME/.blkredo"
         lsn,
       );
       total_redo_bytes += output.len();
+      total_reuse_bytes += (chunk.len() - fetch_chunk.len()) * LOG_BLOCK_SIZE;
     }
     bar.finish();
     drop(bar);
 
     db.add_consistent_point(lsn, remote_image_size);
     println!(
-      "Pulled {}B.",
-      SizeFormatterBinary::new(total_redo_bytes as u64)
+      "Pulled {}B (of which {}B of data is reused)",
+      SizeFormatterBinary::new(total_redo_bytes as u64),
+      SizeFormatterBinary::new(total_reuse_bytes as u64),
     );
 
     if let Some(script) = config
