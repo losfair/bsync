@@ -33,7 +33,7 @@ jobs:
           name: transmitter
           path: ./bsync-transmit/dist
   build-linux:
-    name: Build (Linux)
+    name: Build and test (Linux)
     runs-on: ubuntu-18.04
     needs: build-xmit
     steps:

@@ -41,6 +41,8 @@ remote:
 local:
   db: ./backup.db
 EOF
+
+# First pull
 ./bsync pull -c ./bsync.yaml
 lsn_1="$(./bsync list --db ./backup.db --json | jq ".[-1].lsn")"
 ./bsync replay --db ./backup.db --lsn "$lsn_1" --output ./replay.img
@@ -52,6 +54,7 @@ if [ "$remote_hash_1" != "$local_hash_1" ]; then
   exit 1
 fi
 
+# Incremental update
 run_ssh "dd if=/dev/urandom of=/root/test.img bs=1M count=100 seek=600 conv=notrunc"
 ./bsync pull -c ./bsync.yaml
 lsn_2="$(./bsync list --db ./backup.db --json | jq ".[-1].lsn")"
@@ -64,6 +67,7 @@ if [ "$remote_hash_2" != "$local_hash_2" ] || [ "$remote_hash_2" = "$remote_hash
   exit 1
 fi
 
+# Back to the past
 ./bsync replay --db ./backup.db --lsn "$lsn_1" --output ./replay.img
 local_hash_1_1="$(sha256sum ./replay.img | cut -d ' ' -f 1)"
 if [ "$local_hash_1_1" != "$local_hash_1" ]; then
@@ -71,6 +75,8 @@ if [ "$local_hash_1_1" != "$local_hash_1" ]; then
   exit 1
 fi
 
+# Another incremental update with some zeros. Test cas reuse.
+run_ssh "dd if=/dev/zero of=/root/test.img bs=1M count=5 seek=650 conv=notrunc"
 run_ssh "dd if=/dev/urandom of=/root/test.img bs=1M count=42 seek=690 conv=notrunc"
 ./bsync pull -c ./bsync.yaml
 lsn_3="$(./bsync list --db ./backup.db --json | jq ".[-1].lsn")"
@@ -83,6 +89,7 @@ if [ "$remote_hash_3" != "$local_hash_3" ]; then
   exit 1
 fi
 
+# Check data integrity after squash
 ./bsync squash --db ./backup.db --start-lsn "$lsn_1" --end-lsn "$lsn_3" --data-loss
 ./bsync replay --db ./backup.db --lsn "$lsn_3" --output ./replay.img
 local_hash_3_1="$(sha256sum ./replay.img | cut -d ' ' -f 1)"
