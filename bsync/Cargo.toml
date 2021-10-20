@@ -1,10 +1,10 @@
 [package]
 name = "bsync"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2018"
 license = "MIT"
 repository = "https://github.com/losfair/bsync"
-description = "An incremental backup tool for block devices."
+description = "Incremental, multi-version remote backup tool for block devices."
 authors = ["Heyang Zhou <heyang.zhou@icloud.com>"]
 include = ["/src", "/bsync-transmit-dist"]
 
