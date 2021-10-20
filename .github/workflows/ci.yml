@@ -149,6 +149,7 @@ jobs:
         uses: vmactions/freebsd-vm@v0.1.5
         with:
           usesh: true
+          mem: 2048
           prepare: |
             pkg install -y curl sqlite3 perl5 gmake gcc
             curl https://sh.rustup.rs -sSf | sh -s -- -y
