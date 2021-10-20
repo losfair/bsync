@@ -311,19 +311,23 @@ echo -n "$HOME/.bsync"
           }
         })
         .collect_vec();
-      let script = format!(
-        "~/.bsync/{} {} {} dump {}",
-        escape(Cow::Borrowed(transmit_filename.as_str())),
-        escape(Cow::Borrowed(remote.image.as_str())),
-        LOG_BLOCK_SIZE,
-        fetch_chunk.iter().map(|x| format!("{}", x)).join(","),
-      );
-      let output = exec_oneshot_bin(
-        &mut sess,
-        &script,
-        |inc| bar.inc(inc as u64),
-        |x| Box::new(snap::read::FrameDecoder::new(x)),
-      )?;
+      let output: Vec<u8> = if fetch_chunk.len() == 0 {
+        vec![]
+      } else {
+        let script = format!(
+          "~/.bsync/{} {} {} dump {}",
+          escape(Cow::Borrowed(transmit_filename.as_str())),
+          escape(Cow::Borrowed(remote.image.as_str())),
+          LOG_BLOCK_SIZE,
+          fetch_chunk.iter().map(|x| format!("{}", x)).join(","),
+        );
+        exec_oneshot_bin(
+          &mut sess,
+          &script,
+          |inc| bar.inc(inc as u64),
+          |x| Box::new(snap::read::FrameDecoder::new(x)),
+        )?
+      };
       if output.len() != fetch_chunk.len() * LOG_BLOCK_SIZE {
         return Err(ByteCountMismatch(fetch_chunk.len() * LOG_BLOCK_SIZE, output.len()).into());
       }
