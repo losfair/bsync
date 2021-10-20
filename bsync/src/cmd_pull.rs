@@ -238,6 +238,10 @@ echo -n "$HOME/.bsync"
     let bar = ProgressBar::new(remote_image_size);
     bar.set_style(gen_pb_style("Diff"));
 
+    // XXX: This may become large if we are synchronizing a big block device -
+    // should we store this in SQLite instead?
+    let mut seen_hashes: HashSet<[u8; 32]> = HashSet::new();
+
     for chunk in &(0usize..remote_image_size as usize)
       .step_by(LOG_BLOCK_SIZE)
       .chunks(DIFF_BATCH_SIZE)
@@ -271,7 +275,6 @@ echo -n "$HOME/.bsync"
           .read_block_hash((*x / LOG_BLOCK_SIZE) as u64)
           .unwrap_or(*ZERO_BLOCK_HASH)
       });
-      let mut seen_hashes: HashSet<[u8; 32]> = HashSet::new();
       for (&offset, (lh, rh)) in chunk.iter().zip(local_hashes.zip(remote_hashes)) {
         if lh != rh {
           log::debug!("block at offset {} changed", offset);
@@ -311,6 +314,8 @@ echo -n "$HOME/.bsync"
           }
         })
         .collect_vec();
+
+      // Don't pass empty string to remote.
       let output: Vec<u8> = if fetch_chunk.len() == 0 {
         vec![]
       } else {
@@ -428,12 +433,23 @@ fn exec_oneshot_bin_in<D: for<'a> FnMut(&'a mut dyn Read) -> Box<dyn Read + 'a>>
     }
   }
   channel.wait_close()?;
+
+  let sig = channel.exit_signal()?;
   let status = channel.exit_status()?;
+  let mut msg = String::new();
+  channel.stderr().read_to_string(&mut msg)?;
+
+  // We get `status == 0` if the program is killed by a signal - so do another check here.
+  if let Some(sig) = sig.exit_signal {
+    log::error!("remote signal: {}, stderr: {}", sig, msg);
+    return Err(RemoteError(1).into());
+  }
+
   if status != 0 {
-    let mut msg = String::new();
-    channel.stderr().read_to_string(&mut msg)?;
-    log::error!("remote stderr: {}", msg);
+    log::error!("remote returned error {}, stderr: {}", status, msg);
     return Err(RemoteError(status).into());
   }
+
+  log::debug!("remote stderr: {}", msg);
   Ok(data)
 }

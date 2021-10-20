@@ -106,4 +106,16 @@ if [ "$local_hash_1_2" != "$local_hash_1" ]; then
   exit 1
 fi
 
+# In case all blocks are reused...
+run_ssh "dd if=/dev/zero of=/root/test.img bs=1M count=5 seek=700 conv=notrunc"
+./bsync pull -c ./bsync.yaml
+lsn_4="$(./bsync list --db ./backup.db --json | jq ".[-1].lsn")"
+./bsync replay --db ./backup.db --lsn "$lsn_4" --output ./replay.img
+remote_hash_4="$(run_ssh "sha256sum /root/test.img" | cut -d ' ' -f 1)"
+local_hash_4="$(sha256sum ./replay.img | cut -d ' ' -f 1)"
+if [ "$local_hash_4" != "$remote_hash_4" ]; then
+  echo "[-] local_hash_4 mismatch"
+  exit 1
+fi
+
 echo "[+] Test completed."
