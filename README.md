@@ -21,7 +21,7 @@ The [release workflow](https://github.com/losfair/bsync/blob/main/.github/workfl
 Pull changes (see "Example config" below for an example of `config.yaml`):
 
 ```
-$ ./bsync pull -c ./config.yaml
+$ bsync pull -c ./config.yaml
 ```
 
 List local versions:
@@ -57,6 +57,8 @@ $ ./bsync squash --db ./backup.db --start-lsn 21800 --end-lsn 30245
 ```
 
 ## Example config
+
+The schema of the config file is defined as `BackupConfig` in [src/config.rs](https://github.com/losfair/bsync/blob/main/bsync/src/config.rs) and can be used as a reference.
 
 Note that bsync doesn't automatically snapshot your volumes yet so please add your own snapshot logic (LVM, zvol, etc.) in `remote.scripts.pre_pull` to ensure data consistency. An example for backing up LVM thin volumes (taken from my homelab servers):
 
