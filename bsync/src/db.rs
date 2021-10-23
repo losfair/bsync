@@ -17,13 +17,13 @@ use crate::util::align_block;
 
 macro_rules! migration {
   ($id:ident, $($version:expr,)*) => {
-      static $id: &'static [(&'static str, &'static str)] = &[
-        $(($version, include_str!(concat!("./migration/", $version, ".sql"))),)*
-      ];
+    static $id: &'static [(&'static str, &'static str)] = &[
+      $(($version, include_str!(concat!("./migration/", $version, ".sql"))),)*
+    ];
   };
 }
 
-migration!(VERSIONS, "000001", "000002",);
+migration!(VERSIONS, "000001", "000002", "000003",);
 
 static SNAPSHOT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -146,8 +146,8 @@ impl Database {
       let mut has_cas_stmt = txn
         .prepare_cached("select hash from cas_v1 where hash = ?")
         .unwrap();
-      let mut insert_cas_stmt = txn
-        .prepare_cached("insert into cas_v1 (hash, content) values(?, ?)")
+      let mut insert_cas_compressed_stmt = txn
+        .prepare_cached("insert into cas_v1 (hash, content, compressed) values(?, ?, 1)")
         .unwrap();
       let mut insert_redo_stmt = txn
         .prepare_cached("insert into redo_v1 (block_id, hash) values(?, ?)")
@@ -172,7 +172,8 @@ impl Database {
           match body {
             RedoContentOrHash::Content(content) => {
               let content = align_block(content);
-              insert_cas_stmt
+              let content = zstd::encode_all(&*content, 3)?;
+              insert_cas_compressed_stmt
                 .execute(params![&hash[..], &content[..]])
                 .unwrap();
             }
@@ -293,17 +294,22 @@ impl Snapshot {
     let mut stmt = db
       .prepare_cached(&format!(
         r#"
-      select content from cas_v1
+      select content, compressed from cas_v1
       where hash = (select hash from temp.{} where block_id = ?)
     "#,
         self.table_name
       ))
       .unwrap();
-    let content: Vec<u8> = stmt
-      .query_row(params![block_id], |r| r.get(0))
+    let (content, compressed): (Vec<u8>, bool) = stmt
+      .query_row(params![block_id], |r| Ok((r.get(0)?, r.get(1)?)))
       .optional()
       .unwrap()?;
-    Some(content)
+    if compressed {
+      let content = zstd::decode_all(&content[..]).expect("read_block: decompression failed");
+      Some(content)
+    } else {
+      Some(content)
+    }
   }
 
   pub fn read_block_hash(&self, block_id: u64) -> Option<[u8; 32]> {
