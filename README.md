@@ -48,12 +48,20 @@ Build an image of the block device at a given point in time:
 $ bsync replay --db ./backup.db --lsn 30245 --output ./replay.img
 ```
 
+Start an NBD server to serve a read-only version of the block device at a given point in time:
+
+```
+$ bsync serve --db ./backup.db --lsn 30245 --listen 127.0.0.1:2939
+# Or, to listen on a unix socket
+$ bsync serve --db ./backup.db --lsn 30245 --listen unix:/tmp/bsync.sock
+```
+
 Squash the backup to remove historic versions and free up space:
 
 ```
 # Remove versions between LSN 21800 and 30245 (boundaries excluded) so that the remaining versions are
 # 21800, 30245, 35319
-$ ./bsync squash --db ./backup.db --start-lsn 21800 --end-lsn 30245 
+$ bsync squash --db ./backup.db --start-lsn 21800 --end-lsn 30245 
 ```
 
 ## Example config
