@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use thiserror::Error;
 
-use crate::util::align_block;
+use crate::{blob::ZERO_BLOCK_HASH, util::align_block};
 
 macro_rules! migration {
   ($id:ident, $($version:expr,)*) => {
@@ -290,18 +290,21 @@ pub struct Snapshot {
 
 impl Snapshot {
   pub fn read_block(&self, block_id: u64) -> Option<Vec<u8>> {
+    let hash = self.read_block_hash(block_id)?;
+    if hash == *ZERO_BLOCK_HASH {
+      return None;
+    }
+
     let db = self.db.db.lock();
     let mut stmt = db
-      .prepare_cached(&format!(
+      .prepare_cached(
         r#"
-      select content, compressed from cas_v1
-      where hash = (select hash from temp.{} where block_id = ?)
-    "#,
-        self.table_name
-      ))
+        select content, compressed from cas_v1 where hash = ?
+      "#,
+      )
       .unwrap();
     let (content, compressed): (Vec<u8>, bool) = stmt
-      .query_row(params![block_id], |r| Ok((r.get(0)?, r.get(1)?)))
+      .query_row(params![&hash[..]], |r| Ok((r.get(0)?, r.get(1)?)))
       .optional()
       .unwrap()?;
     if compressed {
