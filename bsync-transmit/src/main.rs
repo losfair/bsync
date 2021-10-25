@@ -18,6 +18,12 @@ fn main() {
   let mut stdout = BufWriter::new(stdout.lock());
   let mut buf = vec![0u8; chunk_size];
 
+  ioprio::set_priority(
+    ioprio::Target::Process(ioprio::Pid::from_raw(0)),
+    ioprio::Priority::new(ioprio::Class::BestEffort(ioprio::BePriorityLevel::lowest())),
+  )
+  .unwrap();
+
   match op.as_str() {
     "hash" => {
       let initial_offset: usize = args

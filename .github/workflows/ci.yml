@@ -215,6 +215,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
+          draft: true
           files: |
             dist/packages/bsync.deb
             dist/packages/bsync_linux.tar.gz
