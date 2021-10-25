@@ -11,6 +11,7 @@ cp ../target/x86_64-unknown-linux-musl/release/bsync-transmit ../bsync/bsync-tra
 cargo build --release --target aarch64-unknown-linux-musl
 cp ../target/aarch64-unknown-linux-musl/release/bsync-transmit ../bsync/bsync-transmit-dist/bsync-transmit.aarch64-unknown-linux-musl
 llvm-strip ../bsync/bsync-transmit-dist/*
+brandelf -t Linux ../bsync/bsync-transmit-dist/*
 cd ..
 
 cd bsync

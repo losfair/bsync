@@ -15,7 +15,7 @@ jobs:
           profile: minimal
           toolchain: stable
       - name: Install system dependencies
-        run: sudo apt install musl-tools llvm lld
+        run: sudo apt install musl-tools llvm lld freebsd-buildutils
       - name: Add targets
         run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
       - name: Build
@@ -27,6 +27,10 @@ jobs:
           cp ../target/x86_64-unknown-linux-musl/release/bsync-transmit ./dist/bsync-transmit.x86_64-unknown-linux-musl
           cp ../target/aarch64-unknown-linux-musl/release/bsync-transmit ./dist/bsync-transmit.aarch64-unknown-linux-musl
           llvm-strip ./dist/*
+          # LLVM emits `OS/ABI: UNIX - System V` instead of `OS/ABI: UNIX - GNU` and this prevents the resulting binary
+          # from running on FreeBSD's Linux compatibility layer
+          brandelf -t Linux ./dist/bsync-transmit.x86_64-unknown-linux-musl
+          brandelf -t Linux ./dist/bsync-transmit.aarch64-unknown-linux-musl
       - name: Upload
         uses: actions/upload-artifact@v2
         with:

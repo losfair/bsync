@@ -149,11 +149,11 @@ impl Pullcmd {
     let remote_arch = remote_uname_segs.next().unwrap_or("");
     let remote_os = remote_uname_segs.next().unwrap_or("");
 
-    if remote_os != "Linux" {
+    if remote_os != "Linux" && remote_os != "FreeBSD" {
       return Err(OsNotSupported(remote_os.to_string()).into());
     }
 
-    log::info!("Remote architecture is {}.", remote_arch);
+    log::info!("Remote platform: {}/{}", remote_arch, remote_os);
 
     let transmit_image = *ARCH_BLKXMIT
       .get(&remote_arch)
