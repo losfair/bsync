@@ -15,9 +15,10 @@ use crate::{
   db::{ConsistentPoint, Database},
 };
 
-/// Replay
+/// Replay logs and build an image of the block device at a given point in time.
 #[derive(Debug, StructOpt)]
 pub struct Replaycmd {
+  /// Path to the output file.
   #[structopt(short, long)]
   output: PathBuf,
 

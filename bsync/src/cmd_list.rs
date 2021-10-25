@@ -44,6 +44,7 @@ impl Listcmd {
       println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
       let mut table = Table::new();
+      table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
       table.set_titles(row!["LSN", "CREATED"]);
       for cp in &cp_list {
         let created_at = NaiveDateTime::from_timestamp(cp.created_at as i64, 0);

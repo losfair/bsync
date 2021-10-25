@@ -243,8 +243,11 @@ impl Database {
       .duration_since(UNIX_EPOCH)
       .unwrap()
       .as_secs();
+    // XXX: This doesn't update the size if the block device is extended with zeros.
     let mut stmt = db
-      .prepare_cached("replace into consistent_point_v1 (lsn, size, created_at) values(?, ?, ?)")
+      .prepare_cached(
+        "insert or ignore into consistent_point_v1 (lsn, size, created_at) values(?, ?, ?)",
+      )
       .unwrap();
     stmt.execute(params![lsn, size, now]).unwrap();
   }

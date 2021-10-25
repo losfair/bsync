@@ -21,7 +21,7 @@ use crate::{
   db::{Database, Snapshot},
 };
 
-/// Replay
+/// Start a read-only NBD server for the version at the given LSN.
 #[derive(Debug, StructOpt)]
 pub struct Servecmd {
   /// The LSN to use.
@@ -32,6 +32,7 @@ pub struct Servecmd {
   #[structopt(long)]
   db: PathBuf,
 
+  /// Listen address. Examples: `127.0.0.1:2929`, `unix:/tmp/bsync.sock`
   #[structopt(short, long)]
   listen: String,
 }
