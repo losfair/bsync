@@ -58,9 +58,14 @@ impl Database {
 
     let mut db = Connection::open_with_flags(path, flags)?;
 
+    // Here we don't use WAL mode because the majority of changes are `insert`s -
+    // using WAL would cause the data to be written twice.
+    //
+    // On the page size: https://www.sqlite.org/intern-v-extern-blob.html
     db.execute_batch(
       r#"
-      pragma journal_mode = wal;
+      pragma journal_mode = truncate;
+      pragma page_size = 16384;
     "#,
     )?;
     db.busy_handler(Some(|i| {
